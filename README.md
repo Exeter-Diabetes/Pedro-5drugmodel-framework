@@ -10,30 +10,21 @@ The files are divided into three folders:
 
 ## Functions
 
-<details>
-
-<summary>More information:</summary>
+<br>
 
 Text here
 
-</details>
 
 ## CPRD
 
-<details>
+<br>
 
-<summary>More information:</summary>
+The `CPRD` folder contains the scripts used to generate and validate the CPRD cohorts. The CPRD cohorts were defined according to the GitHub repository: <https://github.com/Exeter-Diabetes/CPRD-Cohort-scripts>
 
-The CPRD cohort was defined according to the GitHub repository: <https://github.com/Exeter-Diabetes/CPRD-Cohort-scripts>
-
-</details>
 
 ## SDRN
 
-<details>
+<br>
 
-<summary>More information:</summary>
+The `SDRN` folder contains the scripts used to generate and validate the SDRN cohort. The SDRN cohort was defined according to the GitHub repository: <https://github.com/Exeter-Diabetes/SDRN-Cohort-scripts>
 
-The SDRN cohort was defined according to the GitHub repository: <https://github.com/Exeter-Diabetes/SDRN-Cohort-scripts>
-
-</details>
