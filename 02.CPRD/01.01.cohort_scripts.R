@@ -42,7 +42,9 @@ analysis_post_2020 <- t2d_1stinstance %>%
   filter(
     drug_substance != "Glimepiride" & drug_substance != "Lixisenatide" &
       drug_substance != "Glipizide" & drug_substance != "Ertugliflozin" &
-      drug_substance != "Glibenclamide" & drug_substance != "Tolbutamide"
+      drug_substance != "Glibenclamide" & drug_substance != "Tolbutamide" &
+      drug_substance != "Low-dose semaglutide" & drug_substance != "Oral semaglutide" &
+      drug_substance != "Semaglutide, dose unclear"
   ) %>%
   ## Exclusions
   ### Currently treated with insulin
@@ -68,11 +70,11 @@ analysis_post_2020 <- t2d_1stinstance %>%
   ### missing baseline (BMI, eGFR, ALT, HDL, total cholesterol)
   mutate(t2dmduration = datediff(dstartdate, dm_diag_date_all)/365.25) %>%
   filter(!is.na(t2dmduration)) %>%
-  filter(!is.na(prebmi)) %>%
-  filter(!is.na(preegfr)) %>%
-  filter(!is.na(prealt)) %>%
-  filter(!is.na(prehdl)) %>%
-  filter(!is.na(pretotalcholesterol)) %>%
+  # filter(!is.na(prebmi)) %>%
+  # filter(!is.na(preegfr)) %>%
+  # filter(!is.na(prealt)) %>%
+  # filter(!is.na(prehdl)) %>%
+  # filter(!is.na(pretotalcholesterol)) %>%
   # ## Exclusions
   # ### Missing outcome HbA1c
   mutate(posthba1cfinal = ifelse(is.na(posthba1c12m), posthba1c6m, posthba1c12m)) %>%  # generating posthba1c
@@ -89,13 +91,13 @@ analysis_post_2020 <- t2d_1stinstance %>%
 analysis_pre_2020 <- t2d_1stinstance %>%
   ## Exclusions based on time - initiations after 14th October 2020
   filter(dstartdate <= as.Date("2020-10-14")) %>%
-  ## Exclusions based on type of drugsubstance: 
+  ## Exclusions based on type of drugsubstance:
   ### SU - non-gliclazide
   ### TZD - rosiglitazone
   ### GLP1-RA - lixisenatide, exenatide slow-release, semaglutide
   ### MFN
   filter(
-    drug_class != "MFN" & drug_class != "INS" & 
+    drug_class != "MFN" & drug_class != "INS" &
       drug_class != "Glinide"& drug_class != "Acarbose"
   ) %>%
   filter(
