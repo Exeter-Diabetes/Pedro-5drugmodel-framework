@@ -119,6 +119,32 @@ write.csv(table_characteristics_pre2020_print, file = "Outputs/CPRD/01.02.charac
 
 
 #:-- Post 2020-10-14
+analysis_post_2020 <- analysis_post_2020 %>%
+  mutate(
+    prebmi_missing = ifelse(is.na(prebmi), "Yes", "No"),
+    preegfr_missing = ifelse(is.na(preegfr), "Yes", "No"),
+    pretotalcholesterol_missing = ifelse(is.na(pretotalcholesterol), "Yes", "No"),
+    prehdl_missing = ifelse(is.na(prehdl), "Yes", "No"),
+    prealt_missing = ifelse(is.na(prealt), "Yes", "No")
+  )
+
+vars <- c(
+  "agetx", "sex", "t2dmduration", "ethnicity", 
+  "drug_substance",
+  "imd5", "smoke",
+  "prebmi", "prebmi_missing", "prehba1c", "preegfr", "preegfr_missing", 
+  "pretotalcholesterol", "pretotalcholesterol_missing", "prehdl", "prehdl_missing", 
+  "prealt", "prealt_missing",
+  "drugline", "ncurrtx", "hba1cmonth",
+  "posthba1cfinal"
+)
+
+cat_vars <- c(
+  "sex", "ethnicity", "drug_substance", "imd5", "smoke",
+  "drugline", "ncurrtx", "prebmi_missing", "preegfr_missing", "pretotalcholesterol_missing", "prehdl_missing", "prealt_missing"
+)
+
+
 table_characteristics_post2020 <- CreateTableOne(
   vars = vars,
   factorVars = cat_vars,
