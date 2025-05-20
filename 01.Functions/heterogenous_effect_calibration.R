@@ -1,25 +1,33 @@
 #' Estimate Heterogeneous Treatment Effects Across Calibration Groups
 #'
-#' Splits the data into groups based on predicted benefit and estimates the treatment effect
-#' (and confidence intervals) between two drugs within each group using regression models.
+#' Estimates heterogeneous treatment effects between two drugs by stratifying patients
+#' into calibration groups based on predicted benefit scores. Optionally performs 
+#' covariate matching before estimating treatment effects.
+#'
+#' If multiple values are provided to `cal_groups`, the function will repeat the process
+#' for each value and return a combined result.
 #'
 #' @param data A data frame containing observed outcomes, treatment assignments, and predicted benefits.
-#' @param drug_var Character string. Column name for treatment assignment (drug).
+#' @param drug_var Character string. Column name for the treatment assignment variable (e.g., drug).
 #' @param drugs Character vector of length 2. Names of the two drugs to compare.
 #' @param benefit_var Character string. Column name containing predicted benefit scores.
 #' @param outcome_var Character string. Column name for the outcome variable (e.g., clinical measurement).
-#' @param cal_groups Integer. Number of calibration groups to split the population into.
-#' @param adjustment_var Optional character vector. Names of covariates to adjust for in the regression.
+#' @param cal_groups Numeric or numeric vector. Number(s) of calibration groups (e.g., quantiles) to divide the data into based on predicted benefit.
+#' @param matching Logical. Whether to perform covariate matching using the `MatchIt` package before estimating treatment effects.
+#' @param adjustment_var Optional character vector. Names of covariates to include as adjustment variables in the regression model.
+#' @param matching_var Optional character vector. Covariates to use for matching. Defaults to `adjustment_var` if not specified.
 #'
-#' @return A data frame containing one row per calibration group with:
+#' @return A data frame with one row per calibration group and per `cal_groups` value, containing:
 #' \describe{
-#'   \item{mean}{Mean predicted benefit for the group.}
+#'   \item{cal_groups}{Number of calibration groups used.}
+#'   \item{grouping}{Calibration group identifier (e.g., 1 through `cal_groups`).}
+#'   \item{mean}{Mean predicted benefit in the group.}
 #'   \item{coef}{Estimated treatment effect (regression coefficient).}
-#'   \item{coef_low}{Lower bound of 95% confidence interval.}
-#'   \item{coef_high}{Upper bound of 95% confidence interval.}
-#'   \item{grouping}{Calibration group identifier.}
-#'   \item{drug1}{Name of the first drug.}
-#'   \item{drug2}{Name of the second drug.}
+#'   \item{coef_low}{Lower bound of the 95% confidence interval.}
+#'   \item{coef_high}{Upper bound of the 95% confidence interval.}
+#'   \item{n}{Number of individuals in the group.}
+#'   \item{drug1}{Name of the first drug (as provided).}
+#'   \item{drug2}{Name of the second drug (as provided).}
 #' }
 #'
 #' @examples
@@ -30,8 +38,9 @@
 #'   drugs = c("SGLT2", "DPP4"),
 #'   benefit_var = "benefit",
 #'   outcome_var = "posthba1cfinal",
-#'   cal_groups = 5,
-#'   adjustment_var = c("age", "bmi")
+#'   cal_groups = c(3, 5),
+#'   adjustment_var = c("age", "bmi"),
+#'   matching = TRUE
 #' )
 #' }
 #' @export
@@ -59,135 +68,147 @@ heterogenous_effect_calibration <- function(data,
   if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
   if (length(drugs) != 2) stop("Exactly two drugs must be specified")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some specified drugs not present in drug_var column")
-  if (!is.numeric(cal_groups) || cal_groups <= 0) stop("cal_groups must be a positive number")
+  if (!is.numeric(cal_groups)) stop("cal_groups must be numeric")
   if (!is.logical(matching)) stop("matching must be TRUE or FALSE")
   
   # ---------------------------
-  # Prepare and group the data
-  # ---------------------------
-  initial_dataset <- data %>%
-    dplyr::rename(
-      dataset_benefit = !!benefit_var,
-      dataset_drug_var = !!drug_var,
-      dataset_outcome_var = !!outcome_var
-    ) %>%
-    dplyr::filter(dataset_drug_var %in% drugs)
-  
-  
-  # ---------------------------
-  # Optional matching
+  # Iterate through groups
   # ---------------------------
   
-  if (isTRUE(matching)) {
+  result <- NULL
   
-    # drop missing data
-    initial_dataset <- initial_dataset %>%
-      drop_na(matching_var)
-    
-    # matching formula
-    categorical_vars <- matching_var[sapply(initial_dataset[matching_var], \(x) is.factor(x) || is.character(x))]
-    cont_vars <- setdiff(matching_var, categorical_vars)
-    
-    matching_formula <- paste("dataset_drug_var ~", paste(cont_vars, collapse = " + "))
-    for (v in categorical_vars) {
-      if (length(unique(initial_dataset[[v]])) > 1) {
-        matching_formula <- paste(matching_formula, "+", v)
-      }
-    }
-    
-    match_model <- MatchIt::matchit(
-      formula = as.formula(matching_formula),
-      data = initial_dataset,
-      method = "nearest",
-      distance = "mahalanobis",
-      replace = FALSE
-    )
-    
-    calibration_data <- MatchIt::get_matches(match_model, data = initial_dataset)
-    
-  } else {
-    
-    calibration_data <- initial_dataset
-    
-  }
-  
-  # ---------------------------
-  # Initialize result vectors
-  # ---------------------------
-  coef      <- rep(NA_real_, cal_groups)
-  coef_low  <- rep(NA_real_, cal_groups)
-  coef_high <- rep(NA_real_, cal_groups)
-  mean_vals <- rep(NA_real_, cal_groups)
-  n_group   <- rep(0, cal_groups)
-  
-  
-  # ---------------------------
-  # Grouping patients
-  # ---------------------------
-  
-  calibration_data <- calibration_data %>%
-    dplyr::mutate(grouping = dplyr::ntile(dataset_benefit, cal_groups))
-  
-  
-  # ---------------------------
-  # Loop through calibration groups
-  # ---------------------------
-  for (g in seq_len(cal_groups)) {
-    
-    # Subset and factorize drug variable
-    group_data <- calibration_data %>%
-      dplyr::filter(grouping == g) %>%
-      dplyr::mutate(dataset_drug_var = factor(dataset_drug_var, levels = rev(drugs)))
-    
-    # Record group size and mean benefit
-    mean_vals[g] <- mean(group_data$dataset_benefit, na.rm = TRUE)
-    n_group[g]   <- nrow(group_data)
-    
-    if (length(unique(group_data$dataset_drug_var)) < 2) next
+  for (cg in cal_groups) {
+    if (cg <= 0) stop("Each value in cal_groups must be a positive number")
     
     # ---------------------------
-    # Build regression formula
+    # Prepare and group the data
     # ---------------------------
-    formula_str <- "dataset_outcome_var ~ dataset_drug_var"
+    initial_dataset <- data %>%
+      dplyr::rename(
+        dataset_benefit = !!benefit_var,
+        dataset_drug_var = !!drug_var,
+        dataset_outcome_var = !!outcome_var
+      ) %>%
+      dplyr::filter(dataset_drug_var %in% drugs)
     
-    if (!is.null(adjustment_var)) {
-      cat_vars  <- adjustment_var[sapply(group_data[, adjustment_var], function(x) is.factor(x) || is.character(x))]
-      cont_vars <- setdiff(adjustment_var, cat_vars)
+    
+    # ---------------------------
+    # Optional matching
+    # ---------------------------
+    
+    if (isTRUE(matching)) {
+    
+      # drop missing data
+      initial_dataset <- initial_dataset %>%
+        drop_na(matching_var)
       
-      if (length(cont_vars) > 0) {
-        formula_str <- paste(formula_str, paste(cont_vars, collapse = " + "), sep = " + ")
-      }
-      for (v in cat_vars) {
-        if (length(unique(group_data[[v]])) > 1) {
-          formula_str <- paste(formula_str, v, sep = " + ")
+      # matching formula
+      categorical_vars <- matching_var[sapply(initial_dataset[matching_var], \(x) is.factor(x) || is.character(x))]
+      cont_vars <- setdiff(matching_var, categorical_vars)
+      
+      matching_formula <- paste("dataset_drug_var ~", paste(cont_vars, collapse = " + "))
+      for (v in categorical_vars) {
+        if (length(unique(initial_dataset[[v]])) > 1) {
+          matching_formula <- paste(matching_formula, "+", v)
         }
       }
+      
+      match_model <- MatchIt::matchit(
+        formula = as.formula(matching_formula),
+        data = initial_dataset,
+        method = "nearest",
+        distance = "mahalanobis",
+        replace = FALSE
+      )
+      
+      calibration_data <- MatchIt::get_matches(match_model, data = initial_dataset)
+      
+    } else {
+      
+      calibration_data <- initial_dataset
+      
     }
     
     # ---------------------------
-    # Fit model and extract estimates
+    # Initialize result vectors
     # ---------------------------
-    model <- glm(as.formula(formula_str), data = group_data)
-    ci <- suppressMessages(confint.default(model))
+    coef      <- rep(NA_real_, cg)
+    coef_low  <- rep(NA_real_, cg)
+    coef_high <- rep(NA_real_, cg)
+    mean_vals <- rep(NA_real_, cg)
+    n_group   <- rep(0, cg)
     
-    coef[g]      <- coef(model)[2]
-    coef_low[g]  <- ci[2, 1]
-    coef_high[g] <- ci[2, 2]
+    # ---------------------------
+    # Grouping patients
+    # ---------------------------
+    
+    calibration_data <- calibration_data %>%
+      dplyr::mutate(grouping = dplyr::ntile(dataset_benefit, cg))
+    
+    # ---------------------------
+    # Loop through calibration groups
+    # ---------------------------
+    for (g in seq_len(cg)) {
+      
+      # Subset and factorize drug variable
+      group_data <- calibration_data %>%
+        dplyr::filter(grouping == g) %>%
+        dplyr::mutate(dataset_drug_var = factor(dataset_drug_var, levels = rev(drugs)))
+      
+      # Record group size and mean benefit
+      mean_vals[g] <- mean(group_data$dataset_benefit, na.rm = TRUE)
+      n_group[g]   <- nrow(group_data)
+      
+      if (length(unique(group_data$dataset_drug_var)) < 2) next
+      
+      # ---------------------------
+      # Build regression formula
+      # ---------------------------
+      formula_str <- "dataset_outcome_var ~ dataset_drug_var"
+      
+      if (!is.null(adjustment_var)) {
+        cat_vars  <- adjustment_var[sapply(group_data[, adjustment_var], function(x) is.factor(x) || is.character(x))]
+        cont_vars <- setdiff(adjustment_var, cat_vars)
+        
+        if (length(cont_vars) > 0) {
+          formula_str <- paste(formula_str, paste(cont_vars, collapse = " + "), sep = " + ")
+        }
+        for (v in cat_vars) {
+          if (length(unique(group_data[[v]])) > 1) {
+            formula_str <- paste(formula_str, v, sep = " + ")
+          }
+        }
+      }
+      
+      # ---------------------------
+      # Fit model and extract estimates
+      # ---------------------------
+      model <- glm(as.formula(formula_str), data = group_data)
+      ci <- suppressMessages(confint.default(model))
+      
+      coef[g]      <- coef(model)[2]
+      coef_low[g]  <- ci[2, 1]
+      coef_high[g] <- ci[2, 2]
+    }
+    
+    # ---------------------------
+    # Compile results into a data frame
+    # ---------------------------
+    result <- bind_rows(
+      result,
+      data.frame(
+        mean     = mean_vals,
+        coef     = coef,
+        coef_low = coef_low,
+        coef_high= coef_high,
+        n_groups = cg,
+        n        = n_group,
+        drug1    = drugs[1],
+        drug2    = drugs[2]
+      )
+    )
+    
   }
-  
-  # ---------------------------
-  # Compile results into a data frame
-  # ---------------------------
-  result <- data.frame(
-    mean     = mean_vals,
-    coef     = coef,
-    coef_low = coef_low,
-    coef_high= coef_high,
-    n        = n_group,
-    grouping = seq_len(cal_groups),
-    drug1    = drugs[1],
-    drug2    = drugs[2]
-  )
   
   # Return result table
   return(result)
