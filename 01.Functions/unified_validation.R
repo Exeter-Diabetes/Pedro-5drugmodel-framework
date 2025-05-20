@@ -1,31 +1,46 @@
-#' Perform Pairwise Heterogeneous Treatment Effect Calibration
+#' Perform Pairwise Heterogeneous Treatment Effect Calibration Across Multiple Drugs
 #'
-#' This function computes calibration curves for all pairwise comparisons between specified drugs,
-#' based on their respective predicted benefits and observed outcomes. It internally calls 
-#' `heterogenous_effect_calibration()` for each pair.
+#' This function computes heterogeneous treatment effect calibration curves for all pairwise
+#' comparisons between a set of specified drugs. For each drug pair, it calculates the predicted
+#' benefit (the difference between their predicted outcomes), partitions the data into calibration
+#' groups based on predicted benefit, and estimates treatment effects within each group.
 #'
-#' @param data A data.frame containing the dataset.
-#' @param drug_var A character string specifying the column name for the treatment variable.
-#' @param drugs A character vector of exactly two or more drug names to compare.
-#' @param prediction_vars A character vector of the same length as `drugs`, containing
-#'   the column names of the predicted outcomes for each corresponding drug.
-#' @param outcome_var A character string specifying the column name for the observed outcome.
-#' @param cal_groups An integer specifying the number of calibration subgroups (quantiles).
-#' @param adjustment_var Optional character vector of column names to include as adjustment variables in the models.
+#' The function internally calls `heterogenous_effect_calibration()` for each drug pair.
 #'
-#' @return A data.frame with calibration group statistics for each drug pair:
-#'   mean predicted benefit, estimated treatment effect, confidence intervals, and drug pair labels.
+#' @param data A data.frame containing observed outcomes, treatment assignments, and predicted outcomes for each drug.
+#' @param drug_var Character string specifying the column name for the treatment variable (e.g., assigned drug).
+#' @param drugs Character vector of two or more drug names to be compared pairwise.
+#' @param prediction_vars Character vector of the same length as `drugs`, with the column names of the predicted outcomes for each corresponding drug.
+#' @param outcome_var Character string specifying the column name for the observed outcome variable.
+#' @param cal_groups Numeric scalar or vector. The number(s) of calibration groups (quantiles) to partition the population into for subgroup analysis.
+#' @param matching Logical. If `TRUE`, performs covariate matching using the `MatchIt` package before estimating treatment effects.
+#' @param adjustment_var Optional character vector of column names to include as covariates in the regression models.
+#' @param matching_var Optional character vector specifying variables to match on. Defaults to `adjustment_var` if not specified.
+#'
+#' @return A data.frame with one row per calibration group and drug pair combination, containing:
+#' \describe{
+#'   \item{cal_groups}{Number of calibration groups used for this comparison.}
+#'   \item{grouping}{Calibration group index (1 through `cal_groups`).}
+#'   \item{mean}{Mean predicted benefit in the group.}
+#'   \item{coef}{Estimated treatment effect (regression coefficient).}
+#'   \item{coef_low}{Lower bound of the 95% confidence interval.}
+#'   \item{coef_high}{Upper bound of the 95% confidence interval.}
+#'   \item{n}{Number of individuals in the group.}
+#'   \item{drug1}{Name of the first drug in the comparison.}
+#'   \item{drug2}{Name of the second drug in the comparison.}
+#' }
 #'
 #' @examples
 #' \dontrun{
 #' unified_validation(
 #'   data = mydata,
 #'   drug_var = "treatment",
-#'   drugs = c("DrugA", "DrugB"),
-#'   prediction_vars = c("pred_drugA", "pred_drugB"),
+#'   drugs = c("DrugA", "DrugB", "DrugC"),
+#'   prediction_vars = c("pred_drugA", "pred_drugB", "pred_drugC"),
 #'   outcome_var = "outcome",
-#'   cal_groups = 5,
-#'   adjustment_var = c("age", "sex")
+#'   cal_groups = c(3, 5),
+#'   adjustment_var = c("age", "sex"),
+#'   matching = TRUE
 #' )
 #' }
 #'
@@ -54,7 +69,7 @@ unified_validation <- function(data,
   if (length(drugs) < 2) stop("At least two drugs must be specified.")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some `drugs` not present in the `drug_var` column.")
   if (length(drugs) != length(prediction_vars)) stop("`drugs` and `prediction_vars` must have the same length.")
-  if (!is.numeric(cal_groups) || cal_groups <= 0) stop("`cal_groups` must be a positive number.")
+  if (!is.numeric(cal_groups)) stop("cal_groups must be numeric")
   if (!is.logical(matching)) stop("matching must be TRUE or FALSE")
   
   # ---------------------------
