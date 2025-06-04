@@ -16,6 +16,8 @@
 #' @param matching Logical. Whether to perform covariate matching using the `MatchIt` package before estimating treatment effects.
 #' @param adjustment_var Optional character vector. Names of covariates to include as adjustment variables in the regression model.
 #' @param matching_var Optional character vector. Covariates to use for matching. Defaults to `adjustment_var` if not specified.
+#' @param match.exact Optional character vector. Variables for exact matching. Matching on best predicted drug automatically added.
+#' @param match.antiexact Optional character vector. Variables for anti-exact matching. drug_var automatically added.
 #'
 #' @return A data frame with one row per calibration group and per `cal_groups` value, containing:
 #' \describe{
@@ -25,9 +27,10 @@
 #'   \item{coef}{Estimated treatment effect (regression coefficient).}
 #'   \item{coef_low}{Lower bound of the 95% confidence interval.}
 #'   \item{coef_high}{Upper bound of the 95% confidence interval.}
-#'   \item{n}{Number of individuals in the group.}
 #'   \item{drug1}{Name of the first drug (as provided).}
+#'   \item{n_drug1}{Number of individuals in the group with the first drug.}
 #'   \item{drug2}{Name of the second drug (as provided).}
+#'   \item{n_drug2}{Number of individuals in the group with the second drug.}
 #' }
 #'
 #' @examples
@@ -52,7 +55,9 @@ heterogenous_effect_calibration <- function(data,
                                             cal_groups,
                                             matching = FALSE,
                                             adjustment_var = NULL,
-                                            matching_var = adjustment_var) {
+                                            matching_var = adjustment_var,
+                                            match.exact = NULL, 
+                                            match.antiexact = NULL) {
   
   # load libraries
   require(tidyverse)
@@ -66,6 +71,8 @@ heterogenous_effect_calibration <- function(data,
   if (!(outcome_var %in% colnames(data))) stop("outcome_var not found in data")
   if (!is.null(adjustment_var) && !all(adjustment_var %in% colnames(data))) stop("Some adjustment_var not in data")
   if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
+  if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
+  if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
   if (length(drugs) != 2) stop("Exactly two drugs must be specified")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some specified drugs not present in drug_var column")
   if (!is.numeric(cal_groups)) stop("cal_groups must be numeric")
@@ -97,16 +104,25 @@ heterogenous_effect_calibration <- function(data,
     # ---------------------------
     
     if (isTRUE(matching)) {
-    
+      
+      # ---------------------------
+      # Identify best drug for each patient
+      # ---------------------------
+      
+      initial_dataset <- initial_dataset %>%
+        dplyr::mutate(
+          conc_disc_label = ifelse(dataset_benefit <= 0, 1, 0)
+        )
+      
       # drop missing data
       initial_dataset <- initial_dataset %>%
         drop_na(matching_var)
       
       # matching formula
       categorical_vars <- matching_var[sapply(initial_dataset[matching_var], \(x) is.factor(x) || is.character(x))]
-      cont_vars <- setdiff(matching_var, categorical_vars)
+      cont_vars <- setdiff(matching_var, c(categorical_vars, match.exact, match.antiexact))
       
-      matching_formula <- paste("dataset_drug_var ~", paste(cont_vars, collapse = " + "))
+      matching_formula <- paste("conc_disc_label ~", paste(cont_vars, collapse = " + "))  # changed from dataset_drug_var 
       for (v in categorical_vars) {
         if (length(unique(initial_dataset[[v]])) > 1) {
           matching_formula <- paste(matching_formula, "+", v)
@@ -118,7 +134,9 @@ heterogenous_effect_calibration <- function(data,
         data = initial_dataset,
         method = "nearest",
         distance = "mahalanobis",
-        replace = FALSE
+        replace = FALSE,
+        exact = match.exact,
+        antiexact = match.antiexact
       )
       
       calibration_data <- MatchIt::get_matches(match_model, data = initial_dataset)
@@ -136,7 +154,8 @@ heterogenous_effect_calibration <- function(data,
     coef_low  <- rep(NA_real_, cg)
     coef_high <- rep(NA_real_, cg)
     mean_vals <- rep(NA_real_, cg)
-    n_group   <- rep(0, cg)
+    n_drug1 <- rep(0, cg)
+    n_drug2 <- rep(0, cg)
     
     # ---------------------------
     # Grouping patients
@@ -157,8 +176,10 @@ heterogenous_effect_calibration <- function(data,
       
       # Record group size and mean benefit
       mean_vals[g] <- mean(group_data$dataset_benefit, na.rm = TRUE)
-      n_group[g]   <- nrow(group_data)
-      
+      n_drug1[g] <- nrow(group_data %>% filter(dataset_drug_var == drugs[1]))
+      n_drug2[g] <- nrow(group_data %>% filter(dataset_drug_var == drugs[2]))
+
+            
       if (length(unique(group_data$dataset_drug_var)) < 2) next
       
       # ---------------------------
@@ -202,9 +223,10 @@ heterogenous_effect_calibration <- function(data,
         coef_low = coef_low,
         coef_high= coef_high,
         n_groups = cg,
-        n        = n_group,
         drug1    = drugs[1],
-        drug2    = drugs[2]
+        n_drug1  = n_drug1,
+        drug2    = drugs[2],
+        n_drug2  = n_drug2
       )
     )
     
