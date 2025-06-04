@@ -103,7 +103,9 @@ analysis_pre_2020 <- t2d_1stinstance %>%
   filter(
     drug_substance != "Glimepiride" & drug_substance != "Lixisenatide" &
       drug_substance != "Glipizide" & drug_substance != "Ertugliflozin" &
-      drug_substance != "Glibenclamide" & drug_substance != "Tolbutamide"
+      drug_substance != "Glibenclamide" & drug_substance != "Tolbutamide" &
+      drug_substance != "Low-dose semaglutide" & drug_substance != "Oral semaglutide" &
+      drug_substance != "Semaglutide, dose unclear"
   ) %>%
   ## Exclusions
   ### Currently treated with insulin
