@@ -16,18 +16,21 @@
 #' @param matching Logical. If `TRUE`, performs covariate matching using the `MatchIt` package before estimating treatment effects.
 #' @param adjustment_var Optional character vector of column names to include as covariates in the regression models.
 #' @param matching_var Optional character vector specifying variables to match on. Defaults to `adjustment_var` if not specified.
+#' @param match.exact Optional character vector. Variables for exact matching. Matching on best predicted drug automatically added.
+#' @param match.antiexact Optional character vector. Variables for anti-exact matching. drug_var automatically added.
 #'
 #' @return A data.frame with one row per calibration group and drug pair combination, containing:
 #' \describe{
-#'   \item{cal_groups}{Number of calibration groups used for this comparison.}
-#'   \item{grouping}{Calibration group index (1 through `cal_groups`).}
+#'   \item{cal_groups}{Number of calibration groups used.}
+#'   \item{grouping}{Calibration group identifier (e.g., 1 through `cal_groups`).}
 #'   \item{mean}{Mean predicted benefit in the group.}
 #'   \item{coef}{Estimated treatment effect (regression coefficient).}
 #'   \item{coef_low}{Lower bound of the 95% confidence interval.}
 #'   \item{coef_high}{Upper bound of the 95% confidence interval.}
-#'   \item{n}{Number of individuals in the group.}
-#'   \item{drug1}{Name of the first drug in the comparison.}
-#'   \item{drug2}{Name of the second drug in the comparison.}
+#'   \item{drug1}{Name of the first drug (as provided).}
+#'   \item{n_drug1}{Number of individuals in the group with the first drug.}
+#'   \item{drug2}{Name of the second drug (as provided).}
+#'   \item{n_drug2}{Number of individuals in the group with the second drug.}
 #' }
 #'
 #' @examples
@@ -53,7 +56,9 @@ unified_validation <- function(data,
                                cal_groups,
                                matching = FALSE,
                                adjustment_var = NULL,
-                               matching_var = adjustment_var) {
+                               matching_var = adjustment_var,
+                               match.exact = NULL, 
+                               match.antiexact = NULL) {
   
   # load libraries
   require(tidyverse)
@@ -66,6 +71,8 @@ unified_validation <- function(data,
   if (!(outcome_var %in% colnames(data))) stop("`outcome_var` not found in data.")
   if (!is.null(adjustment_var) && !all(adjustment_var %in% colnames(data))) stop("Some `adjustment_var` columns not found in data.")
   if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
+  if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
+  if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
   if (length(drugs) < 2) stop("At least two drugs must be specified.")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some `drugs` not present in the `drug_var` column.")
   if (length(drugs) != length(prediction_vars)) stop("`drugs` and `prediction_vars` must have the same length.")
@@ -112,7 +119,9 @@ unified_validation <- function(data,
       cal_groups = cal_groups,
       matching= matching,
       adjustment_var = adjustment_var,
-      matching_var = matching_var
+      matching_var = matching_var,
+      match.exact = match.exact, 
+      match.antiexact = match.antiexact
     )
     
     # Store results
