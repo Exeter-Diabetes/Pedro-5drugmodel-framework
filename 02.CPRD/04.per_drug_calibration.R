@@ -19,6 +19,9 @@ sapply(paste0("01.Functions/", list.files("01.Functions")), source)
 source("02.CPRD/02.impute_missingness.R")
 source("02.CPRD/03.model_predictions.R")
 
+# load model
+load("fivedrugmodel_5knot_share_20230823.Rdata")
+
 # set up dataset
 analysis_post_2020_raw <- analysis_post_2020_raw %>%
   analysis$cached("analysis_post_2020") %>%
@@ -31,9 +34,6 @@ analysis_pre_2020_raw <- analysis_pre_2020_raw %>%
   collect() %>%
   mutate(patid=as.character(patid)) %>%
   mutate_if(is.integer64, as.integer)
-
-# load model
-load("fivedrugmodel_5knot_share_20230823.Rdata")
 
 
 # Pre-processing datasets ########################################
