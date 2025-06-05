@@ -70,9 +70,12 @@ heterogenous_effect_calibration <- function(data,
   if (!(benefit_var %in% colnames(data))) stop("benefit_var not found in data")
   if (!(outcome_var %in% colnames(data))) stop("outcome_var not found in data")
   if (!is.null(adjustment_var) && !all(adjustment_var %in% colnames(data))) stop("Some adjustment_var not in data")
-  if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
-  if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
-  if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
+  if (isTRUE(matching)) {
+    if (length(matching_var) == 0) stop("Provide at least one matching_var")
+    if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
+    if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
+    if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
+  }
   if (length(drugs) != 2) stop("Exactly two drugs must be specified")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some specified drugs not present in drug_var column")
   if (!is.numeric(cal_groups)) stop("cal_groups must be numeric")
@@ -128,7 +131,7 @@ heterogenous_effect_calibration <- function(data,
           matching_formula <- paste(matching_formula, "+", v)
         }
       }
-      
+
       match_model <- MatchIt::matchit(
         formula = as.formula(matching_formula),
         data = initial_dataset,
@@ -136,7 +139,7 @@ heterogenous_effect_calibration <- function(data,
         distance = "mahalanobis",
         replace = FALSE,
         exact = match.exact,
-        antiexact = match.antiexact
+        antiexact = c("dataset_drug_var", match.antiexact)
       )
       
       calibration_data <- MatchIt::get_matches(match_model, data = initial_dataset)
