@@ -35,9 +35,6 @@ analysis_pre_2020_raw <- analysis_pre_2020_raw %>%
   mutate(patid=as.character(patid)) %>%
   mutate_if(is.integer64, as.integer)
 
-# load model
-load("fivedrugmodel_5knot_share_20230823.Rdata")
-
 
 # Pre-processing datasets ########################################
 
