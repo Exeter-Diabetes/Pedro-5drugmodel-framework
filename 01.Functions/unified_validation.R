@@ -70,9 +70,12 @@ unified_validation <- function(data,
   if (!all(prediction_vars %in% colnames(data))) stop("Some `prediction_vars` not found in data.")
   if (!(outcome_var %in% colnames(data))) stop("`outcome_var` not found in data.")
   if (!is.null(adjustment_var) && !all(adjustment_var %in% colnames(data))) stop("Some `adjustment_var` columns not found in data.")
-  if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
-  if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
-  if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
+  if (isTRUE(matching)) {
+    if (length(matching_var) == 0) stop("Provide at least one matching_var")
+    if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
+    if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
+    if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
+  }
   if (length(drugs) < 2) stop("At least two drugs must be specified.")
   if (!all(drugs %in% unique(data[[drug_var]]))) stop("Some `drugs` not present in the `drug_var` column.")
   if (length(drugs) != length(prediction_vars)) stop("`drugs` and `prediction_vars` must have the same length.")
