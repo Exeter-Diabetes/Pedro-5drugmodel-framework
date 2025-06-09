@@ -612,6 +612,35 @@ plot_pred_response_analysis_post_2020_glp1 <- analysis_post_2020 %>%
   stat_smooth(method='lm', formula = y~poly(x,2)) +
   facet_wrap(~name) +
   labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020 (Post closed loop)")
+
+plot_pred_response_analysis_post_2020_comparison <- analysis_post_2020 %>%
+  pivot_longer(cols = contains("pred.orig.preclosed")) %>%
+  select(name, value, drugclass, posthba1cfinal) %>%
+  mutate(name = gsub("pred\\.orig\\.preclosed\\.", "", name)) %>%
+  filter(drugclass == name & drugclass %in% c("GLP1", "SGLT2")) %>%
+  mutate(method = "Pre recalibration") %>%
+  rbind(
+    analysis_post_2020 %>%
+      pivot_longer(cols = contains("pred.orig")) %>%
+      select(name, value, drugclass, posthba1cfinal) %>%
+      mutate(name = gsub("pred\\.orig\\.", "", name)) %>%
+      filter(drugclass == name & drugclass %in% c("GLP1", "SGLT2")) %>%
+      mutate(method = "Post recalibration"),
+    analysis_post_2020 %>%
+      pivot_longer(cols = contains("pred.orig")) %>%
+      select(name, value, drugclass, posthba1cfinal) %>%
+      mutate(name = gsub("pred\\.orig\\.", "", name)) %>%
+      filter(drugclass == name & !(drugclass %in% c("GLP1", "SGLT2"))) %>%
+      mutate(method = "No recalibration")
+  ) %>%
+  ggplot(aes(x = value, y = posthba1cfinal, colour = method)) +
+  geom_abline(aes(intercept = 0, slope = 1)) +
+  stat_smooth(method='lm', formula = y~poly(x,2)) +
+  theme_classic() +
+  facet_wrap(~name) +
+  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", colour = "Recalibration method:") +
+  theme(legend.position = "bottom")
+
 ## Pre 2020-10-14 ----
 plot_pred_response_analysis_pre_2020 <- analysis_pre_2020 %>%
   pivot_longer(cols = contains("pred.orig")) %>%
@@ -863,8 +892,9 @@ plot_overall_benefit_pre_2020_orig_match_sex
 plot_overall_benefit_pre_2020_orig_match_sex_hba1c
 dev.off()
 
-
-
+pdf("Outputs/CPRD/04.pred_vs_obs_post_2020.pdf", width = 8, height = 5)
+plot_pred_response_analysis_post_2020_comparison
+dev.off()
 
 
 
