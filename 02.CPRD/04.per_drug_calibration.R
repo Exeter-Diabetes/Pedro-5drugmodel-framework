@@ -561,7 +561,7 @@ analysis_pre_2020 <- analysis_pre_2020 %>%
     pred.orig.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "GLP1")),
     pred.orig.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "DPP4")),
     pred.orig.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "TZD")),
-    pred.orig.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass == "SU"))
+    pred.orig.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "SU"))
   )
 
 
