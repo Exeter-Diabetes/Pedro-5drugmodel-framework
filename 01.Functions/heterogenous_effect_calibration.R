@@ -139,7 +139,7 @@ heterogenous_effect_calibration <- function(data,
         distance = "mahalanobis",
         replace = FALSE,
         exact = match.exact,
-        antiexact = c("dataset_drug_var", match.antiexact)
+        antiexact = match.antiexact # c("dataset_drug_var", match.antiexact) 
       )
       
       calibration_data <- MatchIt::get_matches(match_model, data = initial_dataset)
