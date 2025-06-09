@@ -157,15 +157,18 @@ analysis_post_2020_prediction_mice <- predict_5drugmodel(analysis_post_2020_mice
 analysis_post_2020 <- analysis_post_2020 %>%
   cbind(
     analysis_post_2020_prediction_orig %>%
-      select(contains("pred.orig")),
+      select(contains("pred.orig")) %>%
+      rename_with(~ str_replace(., "pred\\.orig\\.", "pred.orig.preclosed.")),
     analysis_post_2020_prediction_group %>%
       select(contains("group_impute")),
     analysis_post_2020_prediction_group %>%
-      select(contains("pred.group")),
+      select(contains("pred.group")) %>%
+      rename_with(~ str_replace(., "pred\\.group\\.", "pred.group.preclosed.")),
     analysis_post_2020_prediction_mice %>%
       select(contains("mice_impute")),
     analysis_post_2020_prediction_mice %>%
-      select(contains("pred.mice"))
+      select(contains("pred.mice")) %>%
+      rename_with(~ str_replace(., "pred\\.mice\\.", "pred.mice.preclosed."))
   )
 
 
@@ -184,7 +187,8 @@ analysis_pre_2020_prediction_orig <- predict_5drugmodel(analysis_pre_2020,
 analysis_pre_2020 <- analysis_pre_2020 %>%
   cbind(
     analysis_pre_2020_prediction_orig %>%
-      select(contains("pred.orig"))
+      select(contains("pred.orig")) %>%
+      rename_with(~ str_replace(., "pred\\.orig\\.", "pred.orig.preclosed."))
   )
 
 
@@ -405,9 +409,6 @@ closed_loop_test_results_SU_post_2020_mice <- closedtest_continuous_function(
 
 
 
-
-
-
 #### Make predictions ----
 analysis_post_2020 <- analysis_post_2020 %>%
   mutate(
@@ -569,6 +570,27 @@ analysis_pre_2020 <- analysis_pre_2020 %>%
 # Calibration of Predictions ##########################################
 
 ## Post 2020-10-14 ----
+plot_pred_response_analysis_post_2020_preclosed <- analysis_post_2020 %>%
+  pivot_longer(cols = contains("pred.orig.preclosed")) %>%
+  select(name, value, drugclass, posthba1cfinal) %>%
+  mutate(name = gsub("pred\\.orig\\.preclosed\\.", "", name)) %>%
+  filter(drugclass == name) %>%
+  ggplot(aes(x = value, y = posthba1cfinal)) +
+  geom_abline(aes(intercept = 0, slope = 1)) +
+  stat_smooth(method='lm', formula = y~poly(x,2)) +
+  facet_wrap(~name) +
+  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020 (Pre closed loop)")
+plot_pred_response_analysis_post_2020_preclosed_glp1 <- analysis_post_2020 %>%
+  pivot_longer(cols = contains("pred.orig.preclosed")) %>%
+  select(name, value, drugclass, drug_substance, posthba1cfinal) %>%
+  mutate(name = gsub("pred\\.orig\\.preclosed\\.", "", name)) %>%
+  filter(drugclass == name) %>%
+  filter(drugclass == "GLP1") %>%
+  ggplot(aes(x = value, y = posthba1cfinal, colour = drug_substance)) +
+  geom_abline(aes(intercept = 0, slope = 1)) +
+  stat_smooth(method='lm', formula = y~poly(x,2)) +
+  facet_wrap(~name) +
+  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020 (Pre closed loop)")
 plot_pred_response_analysis_post_2020 <- analysis_post_2020 %>%
   pivot_longer(cols = contains("pred.orig")) %>%
   select(name, value, drugclass, posthba1cfinal) %>%
@@ -578,7 +600,7 @@ plot_pred_response_analysis_post_2020 <- analysis_post_2020 %>%
   geom_abline(aes(intercept = 0, slope = 1)) +
   stat_smooth(method='lm', formula = y~poly(x,2)) +
   facet_wrap(~name) +
-  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020")
+  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020 (Post closed loop)")
 plot_pred_response_analysis_post_2020_glp1 <- analysis_post_2020 %>%
   pivot_longer(cols = contains("pred.orig")) %>%
   select(name, value, drugclass, drug_substance, posthba1cfinal) %>%
@@ -589,7 +611,7 @@ plot_pred_response_analysis_post_2020_glp1 <- analysis_post_2020 %>%
   geom_abline(aes(intercept = 0, slope = 1)) +
   stat_smooth(method='lm', formula = y~poly(x,2)) +
   facet_wrap(~name) +
-  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020")
+  labs(x = "Predicted HbA1c (mmol/mol)", y = "Observed HbA1c", title = "Post 2020 (Post closed loop)")
 ## Pre 2020-10-14 ----
 plot_pred_response_analysis_pre_2020 <- analysis_pre_2020 %>%
   pivot_longer(cols = contains("pred.orig")) %>%
@@ -817,9 +839,12 @@ plot_overall_benefit_pre_2020_orig_match_sex_hba1c <- overall_benefit_pre_2020_o
 
 ## PDF ----
 pdf("Outputs/CPRD/04.calibration_predictions.pdf", width = 8, height = 5)
+plot_pred_response_analysis_post_2020_preclosed
 plot_pred_response_analysis_post_2020
 plot_pred_response_analysis_pre_2020
 patchwork::wrap_plots(
+  plot_pred_response_analysis_post_2020_preclosed_glp1 +
+    theme(legend.position = "bottom"), 
   plot_pred_response_analysis_post_2020_glp1 +
     theme(legend.position = "bottom"), 
   plot_pred_response_analysis_pre_2020_glp1 +
