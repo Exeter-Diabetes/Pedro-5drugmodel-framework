@@ -157,15 +157,18 @@ analysis_post_2020_prediction_mice <- predict_5drugmodel(analysis_post_2020_mice
 analysis_post_2020 <- analysis_post_2020 %>%
   cbind(
     analysis_post_2020_prediction_orig %>%
-      select(contains("pred.orig")),
+      select(contains("pred.orig")) %>%
+      rename_with(~ str_replace(., "pred\\.orig\\.", "pred.orig.preclosed.")),
     analysis_post_2020_prediction_group %>%
       select(contains("group_impute")),
     analysis_post_2020_prediction_group %>%
-      select(contains("pred.group")),
+      select(contains("pred.group")) %>%
+      rename_with(~ str_replace(., "pred\\.group\\.", "pred.group.preclosed.")),
     analysis_post_2020_prediction_mice %>%
       select(contains("mice_impute")),
     analysis_post_2020_prediction_mice %>%
-      select(contains("pred.mice"))
+      select(contains("pred.mice")) %>%
+      rename_with(~ str_replace(., "pred\\.mice\\.", "pred.mice.preclosed."))
   )
 
 
@@ -184,7 +187,8 @@ analysis_pre_2020_prediction_orig <- predict_5drugmodel(analysis_pre_2020,
 analysis_pre_2020 <- analysis_pre_2020 %>%
   cbind(
     analysis_pre_2020_prediction_orig %>%
-      select(contains("pred.orig"))
+      select(contains("pred.orig")) %>%
+      rename_with(~ str_replace(., "pred\\.orig\\.", "pred.orig.preclosed."))
   )
 
 
