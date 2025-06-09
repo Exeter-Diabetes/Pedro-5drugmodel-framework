@@ -1,17 +1,25 @@
+# 
+# # Initial set-up ###########################################
+# 
 # # load libraries
 # library(tidyverse)
 # library(aurum)
-# 
+# library(rms)
 # 
 # # set up aurum
 # cprd = CPRDData$new(cprdEnv = "diabetes-jun2024", cprdConf = "~/.aurum.yaml")
 # analysis = cprd$analysis("pedro_mm")
 # 
-# # set up functions
+# ## functions ----
 # is.integer64 <- function(x){
 #   class(x)=="integer64"
 # }
+# 
+# sapply(paste0("01.Functions/", list.files("01.Functions")), source)
 # source("02.CPRD/02.impute_missingness.R")
+# 
+# # load model
+# load("fivedrugmodel_5knot_share_20230823.Rdata")
 # 
 # # set up dataset
 # analysis_post_2020_raw <- analysis_post_2020_raw %>%
@@ -20,12 +28,9 @@
 #   mutate(patid=as.character(patid)) %>%
 #   mutate_if(is.integer64, as.integer)
 # 
-# # load model
-# load("fivedrugmodel_5knot_share_20230823.Rdata")
+# # Pre-processing datasets ########################################
 # 
-# #:------------------------------------------------------
-# # Pre-processing datasets
-# #:-- Post 2020-10-14
+# ## Post 2020-10-14 ----
 # analysis_post_2020 <- analysis_post_2020_raw %>%
 #   mutate(
 #     pated = paste(patid, dstartdate, drug_class, sep = "."),
@@ -52,25 +57,30 @@
 #   filter(row == 1) %>%
 #   select(-row) %>%
 #   select(all_of(c(
-#       "pated", "agetx", "sex", "t2dmduration", "ethnicity", 
-#       "drug_substance", "drug_class",
-#       "imd5", "smoke",
-#       "prebmi", "prehba1c", "preegfr", "pretotalcholesterol", "prehdl", "prealt",
-#       "drugline", "ncurrtx", "hba1cmonth",
-#       "posthba1cfinal"
-#     )
+#     "pated", "agetx", "sex", "t2dmduration", "ethnicity",
+#     "drug_substance", "drug_class",
+#     "imd5", "smoke",
+#     "prebmi", "prehba1c", "preegfr", "pretotalcholesterol", "prehdl", "prealt",
+#     "drugline", "ncurrtx", "hba1cmonth",
+#     "posthba1cfinal"
+#   )
 #   )) %>%
-#   rename("drugclass" = "drug_class")
+#   rename("drugclass" = "drug_class") %>%
+#   as.data.frame()
 # 
 # 
+# # Missing data imputation ######################################
 # 
+# ## Post 2020-10-14 ----
+# ### By subgroups
+# analysis_post_2020_group_imputation <- imputation_methods(data = analysis_post_2020,
+#                                                           method = "group")
 # 
-# #:------------------------------------------------------
-# # Impute missing data
-# source("02.CPRD/02.impute_missingness.R")
-# analysis_post_2020_missingness <- imputation_methods(data = analysis_post_2020, 
-#                                                      method = "mice", 
-#                                                      mice.ignore.vars = c("pated", "drug_substance", "drugclass", "hba1cmonth", "posthba1cfinal"))
+# ### By mice
+# analysis_post_2020_mice_imputation <- imputation_methods(data = analysis_post_2020,
+#                                                          method = "mice",
+#                                                          mice.ignore.vars = c("pated", "drug_substance", "drugclass", "hba1cmonth", "posthba1cfinal"))
+
 
 
 #:------------------------------------------------------
@@ -202,26 +212,360 @@ predict_5drugmodel <- function(data, model, drug_var = NULL, drugs = NULL, pred_
   
 }
 
-
-# library(rms)
-# analysis_post_2020_prediction <- predict_5drugmodel(analysis_post_2020_missingness, 
-#                                                     model = m1.5.final, 
-#                                                     drug_var = "drugclass",
-#                                                     drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"))
 # 
-# analysis_post_2020_prediction <- predict_5drugmodel(analysis_post_2020_prediction,
-#                                                     model = m1.5.final,
-#                                                     drug_var = "drugclass",
-#                                                     drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"),
-#                                                     pred_col = "pred.orig.")
-
-
-
-
-
-
-
-
+# # Predictions from datasets #########################################
+# 
+# ## Post 2020-10-14 ----
+# ### Original variables
+# analysis_post_2020_prediction_orig <- predict_5drugmodel(analysis_post_2020,
+#                                                          model = m1.5.final,
+#                                                          drug_var = "drugclass",
+#                                                          drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"),
+#                                                          pred_col = "pred.orig.")
+# 
+# ### Imputation by groups
+# analysis_post_2020_prediction_group <- predict_5drugmodel(analysis_post_2020_group_imputation,
+#                                                           model = m1.5.final,
+#                                                           drug_var = "drugclass",
+#                                                           drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"))
+# 
+# ### Imputation by mice
+# analysis_post_2020_prediction_mice <- predict_5drugmodel(analysis_post_2020_mice_imputation,
+#                                                          model = m1.5.final,
+#                                                          drug_var = "drugclass",
+#                                                          drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"))
+# 
+# 
+# ### merge impute columns into main dataset
+# analysis_post_2020 <- analysis_post_2020 %>%
+#   cbind(
+#     analysis_post_2020_prediction_orig %>%
+#       select(contains("pred.orig")),
+#     analysis_post_2020_prediction_group %>%
+#       select(contains("group_impute")),
+#     analysis_post_2020_prediction_group %>%
+#       select(contains("pred.group")),
+#     analysis_post_2020_prediction_mice %>%
+#       select(contains("mice_impute")),
+#     analysis_post_2020_prediction_mice %>%
+#       select(contains("pred.mice"))
+#   )
+# 
+# 
+# 
+# # Closed loop test #################################################
+# 
+# ## Post 2020-10-14 ----
+# 
+# ### Original variables
+# #### SGLT2
+# closed_loop_test_results_SGLT2_post_2020_orig <- closedtest_continuous_function(
+#   cohort = "SGLT2 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SGLT2") %>% drop_na(),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### GLP1
+# closed_loop_test_results_GLP1_post_2020_orig <- closedtest_continuous_function(
+#   cohort = "GLP1 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "GLP1") %>% drop_na(),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### DPP4
+# closed_loop_test_results_DPP4_post_2020_orig <- closedtest_continuous_function(
+#   cohort = "DPP4 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "DPP4") %>% drop_na(),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### TZD
+# closed_loop_test_results_TZD_post_2020_orig <- closedtest_continuous_function(
+#   cohort = "TZD subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "TZD") %>% drop_na(),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### SU
+# closed_loop_test_results_SU_post_2020_orig <- closedtest_continuous_function(
+#   cohort = "SU subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SU") %>% drop_na(),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# 
+# ### group variables
+# #### SGLT2
+# closed_loop_test_results_SGLT2_post_2020_group <- closedtest_continuous_function(
+#   cohort = "SGLT2 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SGLT2") %>%
+#     mutate(
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### GLP1
+# closed_loop_test_results_GLP1_post_2020_group <- closedtest_continuous_function(
+#   cohort = "GLP1 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "GLP1") %>%
+#     mutate(
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### DPP4
+# closed_loop_test_results_DPP4_post_2020_group <- closedtest_continuous_function(
+#   cohort = "DPP4 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "DPP4") %>%
+#     mutate(
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### TZD
+# closed_loop_test_results_TZD_post_2020_group <- closedtest_continuous_function(
+#   cohort = "TZD subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "TZD") %>%
+#     mutate(
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### SU
+# closed_loop_test_results_SU_post_2020_group <- closedtest_continuous_function(
+#   cohort = "SU subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SU") %>%
+#     mutate(
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# 
+# 
+# ### mice variables
+# #### SGLT2
+# closed_loop_test_results_SGLT2_post_2020_mice <- closedtest_continuous_function(
+#   cohort = "SGLT2 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SGLT2") %>%
+#     mutate(
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### GLP1
+# closed_loop_test_results_GLP1_post_2020_mice <- closedtest_continuous_function(
+#   cohort = "GLP1 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "GLP1") %>%
+#     mutate(
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### DPP4
+# closed_loop_test_results_DPP4_post_2020_mice <- closedtest_continuous_function(
+#   cohort = "DPP4 subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "DPP4") %>%
+#     mutate(
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### TZD
+# closed_loop_test_results_TZD_post_2020_mice <- closedtest_continuous_function(
+#   cohort = "TZD subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "TZD") %>%
+#     mutate(
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# #### SU
+# closed_loop_test_results_SU_post_2020_mice <- closedtest_continuous_function(
+#   cohort = "SU subcohort",
+#   dataset = analysis_post_2020 %>% filter(drugclass == "SU") %>%
+#     mutate(
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ),
+#   original_model = m1.5.final,
+#   outcome_name = "posthba1cfinal",
+#   p_value = 0.05
+# )
+# 
+# 
+# 
+# 
+# 
+# 
+# #### Make predictions ----
+# analysis_post_2020 <- analysis_post_2020 %>%
+#   mutate(
+#     # original variables
+#     pred.orig.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "SGLT2")),
+#     pred.orig.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "GLP1")),
+#     pred.orig.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "DPP4")),
+#     pred.orig.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "TZD")),
+#     pred.orig.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_post_2020 %>% mutate(drugclass == "SU")),
+#     # group variables
+#     pred.group.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_group, analysis_post_2020 %>% mutate(
+#       drugclass = "SGLT2",
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     )),
+#     pred.group.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_group, analysis_post_2020 %>% mutate(
+#       drugclass = "GLP1",
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     )),
+#     pred.group.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_group, analysis_post_2020 %>% mutate(
+#       drugclass = "DPP4",
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     )),
+#     pred.group.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_group, analysis_post_2020 %>% mutate(
+#       drugclass = "TZD",
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     )),
+#     pred.group.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_group, analysis_post_2020 %>% mutate(
+#       drugclass = "SU",
+#       prebmi = prebmi_group_impute,
+#       preegfr = preegfr_group_impute,
+#       pretotalcholesterol = pretotalcholesterol_group_impute,
+#       prehdl = prehdl_group_impute,
+#       prealt = prealt_group_impute
+#     )),
+#     # mice variables
+#     pred.mice.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_mice, analysis_post_2020 %>% mutate(
+#       drugclass = "SGLT2",
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     )),
+#     pred.mice.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_mice, analysis_post_2020 %>% mutate(
+#       drugclass = "GLP1",
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     )),
+#     pred.mice.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_mice, analysis_post_2020 %>% mutate(
+#       drugclass = "DPP4",
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     )),
+#     pred.mice.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_mice, analysis_post_2020 %>% mutate(
+#       drugclass = "TZD",
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     )),
+#     pred.mice.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_mice, analysis_post_2020 %>% mutate(
+#       drugclass = "SU",
+#       prebmi = prebmi_mice_impute,
+#       preegfr = preegfr_mice_impute,
+#       pretotalcholesterol = pretotalcholesterol_mice_impute,
+#       prehdl = prehdl_mice_impute,
+#       prealt = prealt_mice_impute
+#     ))
+#   )
+# 
 
 
 
