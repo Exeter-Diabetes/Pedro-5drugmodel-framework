@@ -3,26 +3,36 @@
 #' This function assesses how well predicted treatment benefits correspond to observed
 #' differences in outcomes. Patients are grouped by predicted benefit, and differences
 #' in observed outcomes between concordant and discordant treatments are regressed
-#' against the predicted differences.
+#' against the predicted differences. Patients are labeled as concordant if they received
+#' a treatment predicted to be optimal (either the top predicted or within a specified
+#' tolerance of the best). Matching is used to control for confounding between treatment groups.
 #'
+
 #' @param data A data frame containing treatment assignments, outcomes, and predicted benefits.
-#' @param drug_var Character string. Column name for treatment assignment.
+#' @param drug_var Character string. Column name for treatment assignment (actual treatment taken).
 #' @param outcome_var Character string. Column name for the outcome variable.
 #' @param cal_groups Integer. Number of calibration groups to divide the population into.
-#' @param pred_cols Character vector. Column names of predicted values for each drug.
-#' @param matching_var Character vector. Covariates used for matching.
-#' @param match.exact Optional character vector. Variables for exact matching. Matching on best predicted drug automatically added.
-#' @param match.antiexact Optional character vector. Variables for anti-exact matching. drug_var automatically added.
+#' @param pred_cols Character vector. Column names of predicted outcomes or risks for each drug. These should have a common prefix (e.g., "pred_GLP1", "pred_SGLT2").
+#' @param conc_tolerance Optional numeric value. If specified, concordance is defined as receiving a treatment within this absolute difference of the best predicted outcome. If NULL, concordance is based on rank-1 predicted drug.
+#' @param matching_var Character vector. Covariates used for Mahalanobis distance matching.
+#' @param match.exact Optional character vector. Variables for exact matching. The best predicted drug is automatically included.
+#' @param match.antiexact Optional character vector. Variables for anti-exact matching. The actual treatment variable is automatically included.
 #'
 #' @return A data frame with one row per calibration group, containing:
 #' \describe{
-#'   \item{mean}{Mean predicted benefit in the group.}
-#'   \item{coef}{Estimated regression coefficient.}
-#'   \item{coef_low}{Lower bound of 95% confidence interval.}
-#'   \item{coef_high}{Upper bound of 95% confidence interval.}
+#'   \item{mean}{Mean predicted benefit in the group (discordant minus concordant).}
+#'   \item{coef}{Estimated observed difference in outcomes (regression coefficient).}
+#'   \item{coef_low}{Lower bound of the 95\% confidence interval.}
+#'   \item{coef_high}{Upper bound of the 95\% confidence interval.}
 #'   \item{n_groups}{Number of calibration groups used.}
-#'   \item{n}{Number of patients in the group.}
+#'   \item{n}{Number of matched pairs in each group.}
 #' }
+#'
+#' @details
+#' This function uses nearest-neighbor matching (via the `MatchIt` package) on a set of covariates to create matched groups of concordant and discordant patients. Within each calibration group defined by predicted benefit, the observed difference in outcome is regressed on the predicted difference to assess calibration.
+#'
+#' @import tidyverse
+#' @import MatchIt
 #'
 #' @export
 overall_predicted_benefit <- function(data, 
@@ -30,6 +40,7 @@ overall_predicted_benefit <- function(data,
                                       outcome_var, 
                                       cal_groups, 
                                       pred_cols = NULL, 
+                                      conc_tolerance = NULL,
                                       matching_var = NULL, 
                                       match.exact = NULL, 
                                       match.antiexact = NULL) {
@@ -44,6 +55,7 @@ overall_predicted_benefit <- function(data,
   if (!(drug_var %in% colnames(data))) stop("drug_var not found in data")
   if (!(outcome_var %in% colnames(data))) stop("outcome_var not found in data")
   if (!all(pred_cols %in% colnames(data))) stop("Some pred_cols not found in data")
+  if (!is.null(conc_tolerance) && !is.numeric(conc_tolerance)) stop("conc_tolerance has to be numeric when supplied")
   if (!is.null(matching_var) && !all(matching_var %in% colnames(data))) stop("Some matching_var not in data")
   if (!is.null(match.exact) && !all(match.exact %in% colnames(data))) stop("Some match.exact variables not in data")
   if (!is.null(match.antiexact) && !all(match.antiexact %in% colnames(data))) stop("Some match.antiexact variables not in data")
@@ -79,17 +91,32 @@ overall_predicted_benefit <- function(data,
   prefix <- common_prefix(pred_cols)
   drug_names <- gsub(prefix, "", pred_cols)
   
-  # Get best drug by prediction
+  # Get best drug by prediction (rank 1 and tolerance)
   interim_dataset <- get_best_drugs(
     data = pre_data,
     rank = 1,
     column_names = pred_cols,
     final_var_name = prefix
   ) %>%
-    dplyr::rename("function_rank1_drug_name" := paste0(prefix, "rank1_drug_name")) %>%
-    dplyr::mutate(
-      conc_disc_label = ifelse(dataset_drug_var == function_rank1_drug_name, 1, 0)
-    )
+    dplyr::rename("function_rank1_drug_name" := paste0(prefix, "rank1_drug_name"))
+  
+  if (is.null(conc_tolerance)) {
+    interim_dataset <- interim_dataset %>%
+      dplyr::mutate(
+        conc_disc_label = ifelse(dataset_drug_var == function_rank1_drug_name, 1, 0)
+      )
+  } else {
+    interim_dataset <- get_best_drugs(
+      data = interim_dataset,
+      tolerance = conc_tolerance,
+      column_names = pred_cols,
+      final_var_name = prefix
+    ) %>%
+      dplyr::rename("function_tolerance_drug_name" := paste0(prefix, "within_", conc_tolerance, "_of_best_drug_name")) %>%
+      dplyr::mutate(
+        conc_disc_label = ifelse(str_detect(function_tolerance_drug_name, paste0("\\b", dataset_drug_var, "\\b")), 1, 0)
+      )
+  }
   
   # ---------------------------
   # Matching step
