@@ -1,13 +1,7 @@
 #' Estimate Observed vs Predicted Benefit Across Calibration Groups
 #'
-#' This function assesses how well predicted treatment benefits correspond to observed
-#' differences in outcomes. Patients are grouped by predicted benefit, and differences
-#' in observed outcomes between concordant and discordant treatments are regressed
-#' against the predicted differences. Patients are labeled as concordant if they received
-#' a treatment predicted to be optimal (either the top predicted or within a specified
-#' tolerance of the best). Matching is used to control for confounding between treatment groups.
+#' This function assesses how well predicted treatment benefits correspond to observed differences in outcomes. Patients are grouped by predicted benefit, and differences in observed outcomes between concordant and discordant treatments are regressed against the predicted differences. Patients are labeled as concordant if they received a treatment predicted to be optimal (either the top predicted or within a specified tolerance of the best). Matching is used to control for confounding between treatment groups.
 #'
-
 #' @param data A data frame containing treatment assignments, outcomes, and predicted benefits.
 #' @param drug_var Character string. Column name for treatment assignment (actual treatment taken).
 #' @param outcome_var Character string. Column name for the outcome variable.

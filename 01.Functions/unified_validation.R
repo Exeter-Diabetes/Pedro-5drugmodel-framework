@@ -1,9 +1,6 @@
 #' Perform Pairwise Heterogeneous Treatment Effect Calibration Across Multiple Drugs
 #'
-#' This function computes heterogeneous treatment effect calibration curves for all pairwise
-#' comparisons between a set of specified drugs. For each drug pair, it calculates the predicted
-#' benefit (the difference between their predicted outcomes), partitions the data into calibration
-#' groups based on predicted benefit, and estimates treatment effects within each group.
+#' This function computes heterogeneous treatment effect calibration curves for all pairwise comparisons between a set of specified drugs. For each drug pair, it calculates the predicted benefit (the difference between their predicted outcomes), partitions the data into calibration groups based on predicted benefit, and estimates treatment effects within each group.
 #'
 #' The function internally calls `heterogenous_effect_calibration()` for each drug pair.
 #'

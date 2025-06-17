@@ -1,7 +1,6 @@
 #' Assign Best Drugs Based on Prediction Rankings or Tolerance
 #'
-#' Applies \code{\link{get_ranked_or_tolerant_drugs}} across all rows of a dataset to determine
-#' the best (or nearly best) drugs based on model predictions. Adds the result as new columns to the data.
+#' Applies \code{\link{get_ranked_or_tolerant_drugs}} across all rows of a dataset to determine the best (or nearly best) drugs based on model predictions. Adds the result as new columns to the data.
 #'
 #' @param data A data frame containing predicted values in specified columns.
 #' @param rank Integer. Rank of the prediction to select (e.g., 1 = best, 2 = second-best). Ignored if `tolerance` is set.

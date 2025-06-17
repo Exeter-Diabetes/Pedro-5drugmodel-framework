@@ -1,11 +1,8 @@
 #' Estimate Heterogeneous Treatment Effects Across Calibration Groups
 #'
-#' Estimates heterogeneous treatment effects between two drugs by stratifying patients
-#' into calibration groups based on predicted benefit scores. Optionally performs 
-#' covariate matching before estimating treatment effects.
+#' Estimates heterogeneous treatment effects between two drugs by stratifying patients into calibration groups based on predicted benefit scores. Optionally performs covariate matching before estimating treatment effects.
 #'
-#' If multiple values are provided to `cal_groups`, the function will repeat the process
-#' for each value and return a combined result.
+#' If multiple values are provided to `cal_groups`, the function will repeat the process for each value and return a combined result.
 #'
 #' @param data A data frame containing observed outcomes, treatment assignments, and predicted benefits.
 #' @param drug_var Character string. Column name for the treatment assignment variable (e.g., drug).

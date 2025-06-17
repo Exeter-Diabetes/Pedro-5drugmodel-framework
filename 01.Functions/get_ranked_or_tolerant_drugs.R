@@ -1,8 +1,6 @@
 #' Get Ranked or Tolerance-Based Drug Recommendation
 #'
-#' This function identifies the drug(s) with the best (lowest) predicted outcome
-#' from a set of model predictions. It can return the nth-best drug or all drugs
-#' within a specified tolerance of the best drug.
+#' This function identifies the drug(s) with the best (lowest) predicted outcome from a set of model predictions. It can return the nth-best drug or all drugs within a specified tolerance of the best drug.
 #'
 #' @param row A named vector or one-row data frame of predictions for a single patient.
 #' @param rank Integer. Rank of drug to return (e.g., 1 = best, 2 = second-best). Ignored if `tolerance` is provided.
