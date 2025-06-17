@@ -15,9 +15,12 @@ is.integer64 <- function(x){
   class(x)=="integer64"
 }
 
-sapply(paste0("01.Functions/", list.files("01.Functions")), source)
-source("02.CPRD/02.impute_missingness.R")
-source("02.CPRD/03.model_predictions.R")
+sapply(
+  paste0("01.Functions/", list.files("01.Functions", pattern = "\\.R$")),
+  source
+)
+source("02.CPRD/03.impute_missingness.R")
+source("02.CPRD/04.model_predictions.R")
 
 # load model
 load("fivedrugmodel_5knot_share_20230823.Rdata")
