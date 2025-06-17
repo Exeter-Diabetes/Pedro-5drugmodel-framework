@@ -1,32 +1,33 @@
+
+# Initial set-up ###########################################
+
 # load libraries
 library(tidyverse)
 library(aurum)
-
+library(rms)
 
 # set up aurum
 cprd = CPRDData$new(cprdEnv = "diabetes-jun2024", cprdConf = "~/.aurum.yaml")
-analysis = cprd$analysis("mm")
+analysis = cprd$analysis("pedro_mm")
 
 # set up dataset
 t2d_1stinstance <- t2d_1stinstance %>%
   analysis$cached("20250327_t2d_1stinstance")
 
-# set up functions
+## functions ----
 is.integer64 <- function(x){
   class(x)=="integer64"
 }
 
-#:-----------------------------------------------------------------------------
-# Flow diagram of inclusions and exclusions
-#:-----------------------------------------------------------------------------
+# Flow diagram: inclusion/exclusions ----
+
 analysis = cprd$analysis("pedro_mm")
 ## Datasets
 #:-- Post 2020-10-14
 #:-- Pre 2020-10-14 (development cohort)
 
 
-########
-#:-- Post 2020-10-14
+## Post 2020-10-14 ----
 analysis_post_2020 <- t2d_1stinstance %>%
   ## Exclusions based on time - initiations after 14th October 2020
   filter(dstartdate > as.Date("2020-10-14")) %>%
@@ -86,8 +87,7 @@ analysis_post_2020 <- t2d_1stinstance %>%
   analysis$cached("analysis_post_2020", indexes=c("patid", "dstartdate", "drug_substance"))
 
 
-########
-#:-- Pre 2020-10-14
+## Pre 2020-10-14 ----
 analysis_pre_2020 <- t2d_1stinstance %>%
   ## Exclusions based on time - initiations after 14th October 2020
   filter(dstartdate <= as.Date("2020-10-14")) %>%
