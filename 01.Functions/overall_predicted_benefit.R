@@ -28,7 +28,7 @@
 #' @import tidyverse
 #' @import MatchIt
 #' @export
-overall_predicted_benefit_testing <- function(data, 
+overall_predicted_benefit <- function(data, 
                                               drug_var, 
                                               outcome_var, 
                                               cal_groups, 
