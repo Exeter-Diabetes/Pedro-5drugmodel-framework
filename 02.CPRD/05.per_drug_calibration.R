@@ -722,7 +722,145 @@ analysis_post_2020 <- get_best_drugs(
 
 
 
-# Overall calibration (benefit) #########################################
+# Overall calibration (summary) #########################################
+
+## Tolerance 3 mmol/mol ----
+
+### Post 2020-10-14 ----
+### Exact matching only on best drug
+overall_benefit_calibration_tolerance3_post_2020_orig <- overall_predicted_benefit_performance(
+  data = analysis_post_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
+)
+
+### Exact matching only on best drug / sex
+overall_benefit_calibration_tolerance3_post_2020_orig_match_sex <- overall_predicted_benefit_performance(
+  data = analysis_post_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex")
+)
+
+### Exact matching only on best drug / sex / hba1c_10
+overall_benefit_calibration_tolerance3_post_2020_orig_match_sex_hba1c <- overall_predicted_benefit_performance(
+  data = analysis_post_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex", "hba1c_group")
+)
+
+### Pre 2020-10-14 ----
+### Exact matching only on best drug
+overall_benefit_calibration_tolerance3_pre_2020_orig <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
+)
+
+### Exact matching only on best drug / sex
+overall_benefit_calibration_tolerance3_pre_2020_orig_match_sex <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex")
+)
+
+### Exact matching only on best drug / sex / hba1c_10
+overall_benefit_calibration_tolerance3_pre_2020_orig_match_sex_hba1c <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  conc_tolerance = 3,
+  matching_var = c("t2dmduration", "prebmi", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex", "hba1c_group")
+)
+
+
+## Rank 1 ----
+
+### Post 2020-10-14 ----
+### Exact matching only on best drug
+overall_benefit_calibration_rank1_post_2020_orig <- overall_predicted_benefit_performance(
+  data = analysis_post_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
+)
+
+### Exact matching only on best drug / sex
+overall_benefit_calibration_rank1_post_2020_orig_match_sex <- overall_predicted_benefit_performance(
+  data = analysis_post_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex")
+)
+
+### Exact matching only on best drug / sex / hba1c_10
+overall_benefit_calibration_rank1_post_2020_orig_match_sex_hba1c <- overall_predicted_benefit_performance(
+  data = analysis_post_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex", "hba1c_group")
+)
+
+
+### Pre 2020-10-14 ----
+
+### Exact matching only on best drug
+overall_benefit_calibration_rank1_pre_2020_orig <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
+)
+
+### Exact matching only on best drug / sex
+overall_benefit_calibration_rank1_pre_2020_orig_match_sex <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020,
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex")
+)
+
+### Exact matching only on best drug / sex / hba1c_10
+overall_benefit_calibration_rank1_pre_2020_orig_match_sex_hba1c <- overall_predicted_benefit_performance(
+  data = analysis_pre_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  drug_var = "drugclass",
+  outcome_var = "posthba1cfinal",
+  pred_cols = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  matching_var = c("t2dmduration", "prebmi", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
+  match.exact = c("sex", "hba1c_group")
+)
+
+
+
+
+# Overall calibration (plot benefit) #########################################
 
 ## Tolerance 3 mmol/mol ----
 
