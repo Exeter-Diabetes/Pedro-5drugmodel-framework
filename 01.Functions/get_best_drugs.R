@@ -21,49 +21,57 @@
 #' get_best_drugs(preds, tolerance = 0.05, column_names = names(preds), final_var_name = "tolerant")
 #' }
 #' @export
-# Wrapper function to apply row-wise
+# Main wrapper function to apply drug selection logic row-wise
 get_best_drugs <- function(data, rank = 1, column_names = NULL, final_var_name = "", tolerance = NULL) {
   
-  # ---------------------------
-  # Validate inputs
-  # ---------------------------
-  if (is.null(column_names) || !all(column_names %in% colnames(data))) {stop("Invalid or missing column_names")}
+  # Input validation ----
   
-  # ---------------------------
-  # Apply ranking or tolerance logic to each row
-  # ---------------------------
-  # Calls 'get_ranked_or_tolerant_drugs' row-wise on the selected columns.
-  # Depending on whether 'rank' or 'tolerance' is specified, it extracts the top-ranked or sufficiently good drug.
-  # Returns a matrix with two columns: 'value' (e.g., predicted score) and 'name' (e.g., drug name).
-  results <- t(apply(data[, column_names], 1, get_ranked_or_tolerant_drugs, 
-                     rank = rank, tolerance = tolerance, column_names = column_names, prediction_column = final_var_name))
+  # Check that column_names are provided and exist in the data
+  if (is.null(column_names) || !all(column_names %in% colnames(data))) {
+    stop("Invalid or missing column_names")
+  }
   
-  # Assign standard column names to the result matrix
+  # Apply selection logic row-wise ----
+  
+  # Apply get_ranked_or_tolerant_drugs to each row using only the specified columns
+  # Results should be a two-column matrix: value (predicted score), name (drug name)
+  results <- do.call(rbind, apply(
+    data[, column_names], 
+    1, 
+    get_ranked_or_tolerant_drugs, 
+    rank = rank, 
+    tolerance = tolerance, 
+    column_names = column_names, 
+    prediction_column = final_var_name
+  ))
+  
+  # Set column names of the results for clarity
   colnames(results) <- c("value", "name")
   
-  # ---------------------------
-  # Generate label for new columns
-  # ---------------------------
-  # If a custom label is not provided, create one based on ranking or tolerance logic.
-  # This label will prefix the output column names to describe what they contain.
-  label <- if (!is.null(tolerance)) paste0(final_var_name, "within_", tolerance, "_of_best") else paste0(final_var_name, "rank", rank)
+  # Create label for output columns ----
   
-  # ---------------------------
-  # Append new columns to original dataset
-  # ---------------------------
-  # Add the drug value column to the dataset. If tolerance is not used, coerce to numeric.
+  # Generate a label that describes the selection logic used (rank or tolerance)
+  label <- if (!is.null(tolerance)) {
+    paste0(final_var_name, "within_", tolerance, "_of_best")
+  } else {
+    paste0(final_var_name, "rank", rank)
+  }
+  
+  # Append new columns to dataset ----
+  
+  # Add predicted value(s) to the data
+  # If using rank, coerce to numeric to ensure consistent column type
   if (is.null(tolerance)) {
     data[[paste0(label, "_drug_value")]] <- as.numeric(results[, "value"])
   } else {
     data[[paste0(label, "_drug_value")]] <- results[, "value"]
   }
   
-  # Add the drug name column (e.g., best drug name by rank or tolerance)
+  # Add selected drug name(s) to the data
   data[[paste0(label, "_drug_name")]] <- results[, "name"]
   
-  # ---------------------------
-  # Return modified dataset
-  # ---------------------------
-  return(data)
+  # Return updated dataset ----
   
+  # Return the modified dataset including the new columns
+  return(data)
 }

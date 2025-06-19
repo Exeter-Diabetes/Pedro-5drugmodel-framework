@@ -25,47 +25,47 @@
 # Function to find nth-best drug OR drugs within a tolerance
 get_ranked_or_tolerant_drugs <- function(row, rank = 1, column_names = NULL, prediction_column = NULL, tolerance = NULL) {
   
-  # ---------------------------
-  # Extract relevant predictions
-  # ---------------------------
-  # Subset the current row to only include the prediction columns for drugs
+  # Extract Relevant Predictions ----
+  
+  # Subset only the prediction values from the specified columns
   values <- row[column_names]
   
-  # Sort predictions in ascending order (lower = better; e.g., lower risk or error)
+  # Sort the predictions in ascending order (lower values are better)
   sorted_values <- sort(values)
   
+  # Tolerance Mode ----
+  
   if (!is.null(tolerance)) {
-    # ---------------------------
-    # Tolerance mode
-    # ---------------------------
-    # Identify all drugs whose predicted values are within 'tolerance' units of the best prediction
-    best_val <- sorted_values[1]  # Best (lowest) prediction value
-    close_vals <- sorted_values[sorted_values <= best_val + tolerance]  # Select predictions within range
     
-    # Remove the prediction prefix to get just the drug names
+    # Get the best (lowest) prediction value
+    best_val <- sorted_values[1]
+    
+    # Select all drugs within the tolerance of the best value
+    close_vals <- sorted_values[sorted_values <= best_val + tolerance]
+    
+    # Remove the prediction prefix (e.g., "pred_") to extract drug names
     drug_names <- gsub(prediction_column, "", names(close_vals))
     
-    # Return comma-separated lists of values and drug names
+    # Return comma-separated predicted values and drug names, sorted alphabetically by name
     return(c(
       value = paste(close_vals[order(drug_names)], collapse = ","),
       name  = paste(drug_names[order(drug_names)], collapse = ",")
     ))
     
   } else {
-    # ---------------------------
-    # Ranking mode
-    # ---------------------------
-    # Return the nth-best prediction value and corresponding drug
     
-    # If requested rank exceeds number of available drugs, return NA
+    # Ranking Mode ----
+    
+    # If the requested rank is beyond available predictions, return NAs
     if (rank > length(sorted_values)) {
       return(c(value = NA, name = NA))
     }
     
-    # Extract the prediction value and corresponding drug name at the specified rank
+    # Get the value and drug name at the specified rank
     best_value <- sorted_values[rank]
     best_name <- gsub(prediction_column, "", names(sorted_values)[rank])
     
+    # Return single best value and name
     return(c(value = best_value, name = best_name))
   }
 }
