@@ -859,6 +859,55 @@ overall_benefit_calibration_rank1_pre_2020_orig_match_sex_hba1c <- overall_predi
 
 
 
+## Summary ----
+
+calibration_summary <- do.call(rbind, overall_benefit_calibration_tolerance3_post_2020_orig) %>%
+  mutate(Matching = "Best drug") %>%
+  rbind(
+    do.call(rbind, overall_benefit_calibration_tolerance3_post_2020_orig_match_sex) %>%
+      mutate(Matching = "Best drug, sex"),
+    do.call(rbind, overall_benefit_calibration_tolerance3_post_2020_orig_match_sex_hba1c) %>%
+      mutate(Matching = "Best drug, sex, hba1c")
+  ) %>%
+  mutate(Dataset = "Post 2020") %>%
+  rbind(
+    do.call(rbind, overall_benefit_calibration_tolerance3_pre_2020_orig) %>%
+      mutate(Matching = "Best drug") %>%
+      rbind(
+        do.call(rbind, overall_benefit_calibration_tolerance3_pre_2020_orig_match_sex) %>%
+          mutate(Matching = "Best drug, sex"),
+        do.call(rbind, overall_benefit_calibration_tolerance3_pre_2020_orig_match_sex_hba1c) %>%
+          mutate(Matching = "Best drug, sex, hba1c")
+      ) %>%
+      mutate(Dataset = "Pre 2020")
+  ) %>%
+  mutate(Method = "3mmol") %>%
+  rbind(
+    do.call(rbind, overall_benefit_calibration_rank1_post_2020_orig) %>%
+      mutate(Matching = "Best drug") %>%
+      rbind(
+        do.call(rbind, overall_benefit_calibration_rank1_post_2020_orig_match_sex) %>%
+          mutate(Matching = "Best drug, sex"),
+        do.call(rbind, overall_benefit_calibration_rank1_post_2020_orig_match_sex_hba1c) %>%
+          mutate(Matching = "Best drug, sex, hba1c")
+      ) %>%
+      mutate(Dataset = "Post 2020") %>%
+      rbind(
+        do.call(rbind, overall_benefit_calibration_rank1_pre_2020_orig) %>%
+          mutate(Matching = "Best drug") %>%
+          rbind(
+            do.call(rbind, overall_benefit_calibration_rank1_pre_2020_orig_match_sex) %>%
+              mutate(Matching = "Best drug, sex"),
+            do.call(rbind, overall_benefit_calibration_rank1_pre_2020_orig_match_sex_hba1c) %>%
+              mutate(Matching = "Best drug, sex, hba1c")
+          ) %>%
+          mutate(Dataset = "Pre 2020")
+      ) %>%
+      mutate(Method = "rank1")
+  ) %>%
+  rownames_to_column()
+
+saveRDS(calibration_summary, "Outputs/CPRD/05.overvall_benefit_calibration_summary.rds")
 
 # Overall calibration (plot benefit) #########################################
 
@@ -1161,7 +1210,7 @@ plot_overall_benefit_rank1_pre_2020_orig_match_sex_hba1c <- overall_benefit_rank
 
 
 ## PDF ----
-pdf("Outputs/CPRD/04.calibration_predictions.pdf", width = 8, height = 5)
+pdf("Outputs/CPRD/05.calibration_predictions.pdf", width = 8, height = 5)
 plot_pred_response_analysis_post_2020_preclosed
 plot_pred_response_analysis_post_2020
 plot_pred_response_analysis_pre_2020
@@ -1177,7 +1226,7 @@ patchwork::wrap_plots(
   theme(legend.position = "bottom")
 dev.off()
 
-pdf("Outputs/CPRD/04.post_overall_calibration.pdf", width = 7, height = 5)
+pdf("Outputs/CPRD/05.post_overall_calibration.pdf", width = 7, height = 5)
 plot_overall_benefit_rank1_post_2020_orig
 plot_overall_benefit_rank1_post_2020_orig_match_sex
 plot_overall_benefit_rank1_post_2020_orig_match_sex_hba1c
@@ -1186,7 +1235,7 @@ plot_overall_benefit_tolerance3_post_2020_orig_match_sex
 plot_overall_benefit_tolerance3_post_2020_orig_match_sex_hba1c
 dev.off()
 
-pdf("Outputs/CPRD/04.pre_overall_calibration.pdf", width = 7, height = 5)
+pdf("Outputs/CPRD/05.pre_overall_calibration.pdf", width = 7, height = 5)
 plot_overall_benefit_rank1_pre_2020_orig
 plot_overall_benefit_rank1_pre_2020_orig_match_sex
 plot_overall_benefit_rank1_pre_2020_orig_match_sex_hba1c
@@ -1195,7 +1244,7 @@ plot_overall_benefit_tolerance3_pre_2020_orig_match_sex
 plot_overall_benefit_tolerance3_pre_2020_orig_match_sex_hba1c
 dev.off()
 
-pdf("Outputs/CPRD/04.pred_vs_obs_post_2020.pdf", width = 8, height = 5)
+pdf("Outputs/CPRD/05.pred_vs_obs_post_2020.pdf", width = 8, height = 5)
 plot_pred_response_analysis_post_2020_comparison
 dev.off()
 
