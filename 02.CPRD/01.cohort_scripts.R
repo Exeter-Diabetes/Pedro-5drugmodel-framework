@@ -8,7 +8,7 @@ library(rms)
 
 # set up aurum
 cprd = CPRDData$new(cprdEnv = "diabetes-jun2024", cprdConf = "~/.aurum.yaml")
-analysis = cprd$analysis("pedro_mm")
+analysis = cprd$analysis("mm")
 
 # set up dataset
 t2d_1stinstance <- t2d_1stinstance %>%
