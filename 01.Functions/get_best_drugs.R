@@ -23,7 +23,6 @@
 #' @export
 # Main wrapper function to apply drug selection logic row-wise
 get_best_drugs <- function(data, rank = 1, column_names = NULL, final_var_name = "", tolerance = NULL) {
-  
   # Input validation ----
   
   # Check that column_names are provided and exist in the data
@@ -35,15 +34,8 @@ get_best_drugs <- function(data, rank = 1, column_names = NULL, final_var_name =
   
   # Apply get_ranked_or_tolerant_drugs to each row using only the specified columns
   # Results should be a two-column matrix: value (predicted score), name (drug name)
-  results <- do.call(rbind, apply(
-    data[, column_names], 
-    1, 
-    get_ranked_or_tolerant_drugs, 
-    rank = rank, 
-    tolerance = tolerance, 
-    column_names = column_names, 
-    prediction_column = final_var_name
-  ))
+  results <- t(apply(data[, column_names], 1, get_ranked_or_tolerant_drugs, rank = rank, tolerance = tolerance, column_names = column_names, prediction_column = final_var_name))
+  
   
   # Set column names of the results for clarity
   colnames(results) <- c("value", "name")
