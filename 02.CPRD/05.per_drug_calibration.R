@@ -1069,105 +1069,13 @@ overall_benefit_rank1_pre_2020_orig_match_sex_hba1c <- overall_predicted_benefit
 # Plots ####################################################
 
 ## Best drug combinations ----
-
-optimal_drug_comparison_plot <- function(data, groups) {
-  
-  summary_number <- data.frame(drugs = data) %>%
-    mutate(drug_count = if_else(drugs == "", 0L, str_count(drugs, ",") + 1)) %>%
-    filter(drug_count != 0) %>%
-    count(drug = drug_count, name = "Count") %>%
-    mutate(
-      Percentage = round(Count / length(data), 4)
-    )
-  
-  summary_combinations <- purrr::map_dfr(
-    names(groups),
-    function(label) {
-      tibble(drugs = data) %>%
-        mutate(drug_count = if_else(drugs == "", 0L, str_count(data, ",") + 1)) %>%
-        filter(drug_count %in% groups[[label]]) %>%
-        count(drug = drugs, name = "Count") %>%
-        mutate(
-          Percentage = round(Count / length(data), 4),
-          Combinations = label
-        )
-    }
-  ) %>%
-    group_by(Combinations) %>%
-    arrange(Combinations, desc(Percentage), .by_group = TRUE) %>%
-    mutate(Group_Percentage = round(sum(Count) / length(data), 4)) %>%
-    ungroup() %>%
-    filter(Percentage >= 0.001)
-  
-  plot_a <- summary_number %>%
-    ggplot(aes(x = reorder(drug, rev(drug)), y = Percentage)) +
-    geom_text(aes(label = drug), 
-              hjust = -0.5,  # place label just outside bars to the right
-              size = 8) +
-    geom_col(fill = "#076fa2") +
-    geom_hline(aes(yintercept = 0)) +
-    scale_y_continuous(labels = scales::percent, breaks = seq(0, max(summary_number$Percentage) + 0.05, by = 0.05)) +
-    coord_flip() +
-    theme_minimal() +
-    labs(title = "Number of predicted optimal drug", subtitle = "Proportion of individuals optimal drugs (defined by >3 mmol/mol predicted benefit)") + 
-    theme(
-      axis.title = element_blank(),
-      axis.text.y = element_blank()
-    )
-  
-  # Set the order of Combinations by descending Group_Percentage
-  combi_order <- names(groups)
-  
-  # Prepare data with factor levels for ordering
-  df2 <- summary_combinations %>%
-    mutate(
-      Combinations = factor(Combinations, levels = combi_order),
-    ) %>%
-    group_by(Combinations) %>%
-    arrange(desc(Percentage), .by_group = TRUE) %>%
-    ungroup() %>%
-    mutate(
-      drug = factor(drug, levels = rev(unique(drug)))  # will reorder after reordering y axis below
-    )
-  
-  # Now reorder drug factor within groups by Percentage, preserving group order
-  # This is the trickier part:
-  
-  df2 <- df2 %>%
-    arrange(Combinations, desc(Percentage)) %>%
-    mutate(drug = factor(drug, levels = rev(drug)))
-  
-  # Plot
-  plot_b <- ggplot(df2, aes(x = Percentage, y = drug)) +
-    geom_text(aes(label = scales::percent(Percentage, accuracy = 0.1)), 
-              hjust = -0.1,  # place label just outside bars to the right
-              size = 3) +
-    geom_col(fill = "#076fa2") +
-    labs(
-      title = "Predicted HbA1c-optimal drug classes"
-    ) +
-    scale_x_continuous(labels = scales::percent, breaks = seq(0, max(df2$Percentage) + 0.05, by = 0.05), expand = expansion(mult = c(0, 0.1))) +
-    theme_minimal() +
-    theme(
-      axis.title = element_blank()
-    )
-  
-  
-  final_plot <- patchwork::wrap_plots(plot_a, plot_b, ncol = 2, nrow = 1)
-  
-  
-  return(final_plot)
-}
-
-
 # Define groupings
 groups <- list(
   "1-drug combination" = 1,
   "2-drug combinations" = 2,
   "3-drug combinations" = 3,
-  "3/4/5-drug combinations" = 4:5
+  "4/5-drug combinations" = 4:5
 )
-
 
 plot_tolerance3_analysis_post_2020 <- optimal_drug_comparison_plot(analysis_post_2020$pred.orig.within_3_of_best_drug_name, groups)
 
