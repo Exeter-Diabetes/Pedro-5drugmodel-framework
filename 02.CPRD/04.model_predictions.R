@@ -58,7 +58,7 @@ predict_5drugmodel <- function(data, model, drug_var = NULL, drugs = NULL, pred_
       output_dataset <- data$imputation
       
       # check whether drugs provided are included in the dataset
-      if (!all(drugs %in% unique(output_dataset %>% select(all_of(drug_var)) %>% unlist() %>% unique()))) {stop("some drugs provided are not in drug_var")}
+      # if (!all(drugs %in% unique(output_dataset %>% select(all_of(drug_var)) %>% unlist() %>% unique()))) {stop("some drugs provided are not in drug_var")}
       if (is.null(drugs)) {stop("drugs needs to be provided")}
       
       # name of variables imputated
