@@ -18,3 +18,6 @@ Files structure:
 - `04.model_predictions.R`: prediction from 5-drug model with function to help deployment.
 - `05.per_drug_calibration.R`: calibration of overall benefit with examples of deployment.
 - `06.per_drug_pair_calibration.R`: calibration of drug pairs benefits with examples of deployment.
+- `07.exploring_extreme_benefit.R`: exploring patients with extreme overall benefit (high and low).
+- `08.adding_therapy.R`: procedure for adding a new therapy (semaglutide)
+- `09.under_40.R`: procedure for testing post-2020 on younger adults
