@@ -123,6 +123,9 @@ heterogenous_effect_calibration <- function(data,
         mutate(conc_disc_label = ifelse(dataset_benefit <= 0, 1, 0)) %>%
         drop_na(matching_var)
       
+      # Skip loop if only concordant patients (or discordant)
+      if (length(unique(initial_dataset$conc_disc_label)) < 2) {next}
+      
       # Construct Matching Formula ----
       categorical_vars <- matching_var[sapply(initial_dataset[matching_var], \(x) is.factor(x) || is.character(x))]
       cont_vars <- setdiff(matching_var, c(categorical_vars, match.exact, match.antiexact))
