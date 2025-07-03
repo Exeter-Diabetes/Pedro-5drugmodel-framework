@@ -27,6 +27,12 @@ source("02.CPRD/04.model_predictions.R")
 load("fivedrugmodel_5knot_share_20230823.Rdata")
 
 # set up dataset
+analysis_pre_2020_raw <- analysis_pre_2020_raw %>%
+  analysis$cached("analysis_pre_2020") %>%
+  collect() %>%
+  mutate(patid=as.character(patid)) %>%
+  mutate_if(is.integer64, as.integer)
+
 analysis_post_2020_raw <- analysis_post_2020_raw %>%
   analysis$cached("analysis_post_2020") %>%
   collect() %>%
@@ -36,7 +42,47 @@ analysis_post_2020_raw <- analysis_post_2020_raw %>%
 
 
 # Pre-processing datasets ########################################
+## Post 2020-10-14 ----
 analysis_post_2020 <- analysis_post_2020_raw %>%
+  mutate(
+    pated = paste(patid, dstartdate, drug_class, sep = "."),
+    sex = factor(gender, levels = c(1, 2), labels = c("Male", "Female")),
+    agetx = dstartdate_age,
+    ethnicity = ifelse(is.na(ethnicity_5cat), 5, ethnicity_5cat),
+    ethnicity = factor(ethnicity, levels = c(0:5), labels = c("White", "South Asian", "Black", "Other", "Mixed", "Missing")),
+    
+    smoke = ifelse(is.na(smoking_cat), "Not recorded", smoking_cat),
+    smoke = factor(smoke, levels = c("Non-smoker", "Active smoker", "Ex-smoker", "Not recorded")),
+    imd5 = ifelse(is.na(imd_decile), 5, imd_decile),
+    imd5 = factor(ceiling(imd5/2), levels = c(1, 2, 3, 4, 5), labels = c("1 (least)", "2", "3", "4", "5 (most)")),
+    
+    ncurrtx = MFN + SGLT2 + GLP1 + DPP4 + TZD + SU,
+    ncurrtx = ifelse(ncurrtx > 4, 4, ncurrtx),
+    ncurrtx = factor(ncurrtx, levels = c(1:4), labels = c("1", "2", "3", "4+")),
+    drugline = ifelse(drugline_all > 5, 5, drugline_all),
+    drugline = factor(drugline, levels = c(2:5), labels = c("2", "3", "4", "5+")),
+    drugclass = drug_class
+  ) %>%
+  group_by(pated) %>%
+  mutate(row = 1:n()) %>%
+  ungroup() %>%
+  filter(row == 1) %>%
+  select(-row) %>%
+  select(all_of(c(
+    "pated", "agetx", "sex", "t2dmduration", "ethnicity",
+    "drug_substance", "drug_class",
+    "imd5", "smoke",
+    "prebmi", "prehba1c", "preegfr", "pretotalcholesterol", "prehdl", "prealt",
+    "drugline", "ncurrtx", "hba1cmonth",
+    "posthba1cfinal"
+  )
+  )) %>%
+  rename("drugclass" = "drug_class") %>%
+  as.data.frame()
+
+
+## Pre 2020-10-14 ----
+analysis_pre_2020 <- analysis_pre_2020_raw %>%
   mutate(
     pated = paste(patid, dstartdate, drug_class, sep = "."),
     sex = factor(gender, levels = c(1, 2), labels = c("Male", "Female")),
@@ -109,6 +155,24 @@ analysis_post_2020 <- analysis_post_2020 %>%
   )
 
 
+## Pre 2020-10-14 ----
+### Original variables
+analysis_pre_2020_prediction_orig <- predict_5drugmodel(analysis_pre_2020,
+                                                        model = m1.5.final,
+                                                        drug_var = "drugclass",
+                                                        drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"),
+                                                        pred_col = "pred.orig.")
+
+
+
+### merge impute columns into main dataset
+analysis_pre_2020 <- analysis_pre_2020 %>%
+  cbind(
+    analysis_pre_2020_prediction_orig %>%
+      select(contains("pred.orig")) %>%
+      rename_with(~ str_replace(., "pred\\.orig\\.", "pred.orig.preclosed."))
+  )
+
 
 # Closed loop test #################################################
 
@@ -172,8 +236,80 @@ analysis_post_2020 <- analysis_post_2020 %>%
     pred.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "SU"))
   )
 
-analysis_post_2020 <- analysis_post_2020 %>%
-  filter(agetx <= 45)
+
+
+## Pre 2020-10-14 ----
+
+### Original variables
+#### SGLT2
+closed_loop_test_results_SGLT2_pre_2020_orig <- closedtest_continuous_function(
+  cohort = "SGLT2 subcohort",
+  dataset = analysis_pre_2020 %>% filter(drugclass == "SGLT2") %>% drop_na(),
+  original_model = m1.5.final,
+  outcome_name = "posthba1cfinal",
+  p_value = 0.05
+)
+
+#### GLP1
+closed_loop_test_results_GLP1_pre_2020_orig <- closedtest_continuous_function(
+  cohort = "GLP1 subcohort",
+  dataset = analysis_pre_2020 %>% filter(drugclass == "GLP1") %>% drop_na(),
+  original_model = m1.5.final,
+  outcome_name = "posthba1cfinal",
+  p_value = 0.05
+)
+
+#### DPP4
+closed_loop_test_results_DPP4_pre_2020_orig <- closedtest_continuous_function(
+  cohort = "DPP4 subcohort",
+  dataset = analysis_pre_2020 %>% filter(drugclass == "DPP4") %>% drop_na(),
+  original_model = m1.5.final,
+  outcome_name = "posthba1cfinal",
+  p_value = 0.05
+)
+
+#### TZD
+closed_loop_test_results_TZD_pre_2020_orig <- closedtest_continuous_function(
+  cohort = "TZD subcohort",
+  dataset = analysis_pre_2020 %>% filter(drugclass == "TZD") %>% drop_na(),
+  original_model = m1.5.final,
+  outcome_name = "posthba1cfinal",
+  p_value = 0.05
+)
+
+#### SU
+closed_loop_test_results_SU_pre_2020_orig <- closedtest_continuous_function(
+  cohort = "SU subcohort",
+  dataset = analysis_pre_2020 %>% filter(drugclass == "SU") %>% drop_na(),
+  original_model = m1.5.final,
+  outcome_name = "posthba1cfinal",
+  p_value = 0.05
+)
+
+
+#### Make predictions ----
+analysis_pre_2020 <- analysis_pre_2020 %>%
+  mutate(
+    # original variables
+    pred.orig.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "SGLT2")),
+    pred.orig.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "GLP1")),
+    pred.orig.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "DPP4")),
+    pred.orig.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "TZD")),
+    pred.orig.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_pre_2020_orig, analysis_pre_2020 %>% mutate(drugclass = "SU"))
+  )
+
+
+
+
+analysis_cohort <- analysis_post_2020 %>%
+  rename_with(~ str_replace(., ".orig", "")) %>%
+  select(-contains("preclosed")) %>%
+  rbind(
+    analysis_pre_2020 %>%
+      rename_with(~ str_replace(., ".orig", "")) %>%
+      select(-contains("preclosed"))
+  ) %>%
+  filter(agetx <= 40)
 
 # Overall calibration (plot benefit) #########################################
 
@@ -181,7 +317,7 @@ analysis_post_2020 <- analysis_post_2020 %>%
 
 ### Exact matching only on best drug / sex / hba1c_10
 overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_predicted_benefit(
-  data = analysis_post_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  data = analysis_cohort %>% mutate(hba1c_group = ntile(prehba1c, 10)),
   drug_var = "drugclass",
   outcome_var = "posthba1cfinal",
   cal_groups = 5,
@@ -196,7 +332,7 @@ overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_predicted_benefi
 
 ### Exact matching only on best drug / sex / hba1c_10
 overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_predicted_benefit(
-  data = analysis_post_2020 %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  data = analysis_cohort %>% mutate(hba1c_group = ntile(prehba1c, 10)),
   drug_var = "drugclass",
   outcome_var = "posthba1cfinal",
   cal_groups = 5,
@@ -208,11 +344,11 @@ overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_predicted_benefit(
 
 # Unified validation ########################################
 
-analysis_post_2020_calibration_adj <- unified_validation(
-  data = analysis_post_2020, 
+analysis_cohort_calibration_adj <- unified_validation(
+  data = analysis_cohort, 
   drug_var = "drugclass",
   drugs = c("SGLT2", "GLP1", "TZD", "SU", "DPP4"),
-  prediction_vars = paste0("pred.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  prediction_vars = paste0("pred.", c("SGLT2", "GLP1", "TZD", "SU", "DPP4")),
   outcome_var = "posthba1cfinal",
   cal_groups = c(3, 5, 10),
   adjustment_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
@@ -243,7 +379,7 @@ plot_overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_benefit_rank1_po
   labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Post 2020 (matching best drug / sex / hba1c_10)")
 
 
-plot_unified_validation_post_2020 <- analysis_post_2020_calibration_adj %>%
+plot_unified_validation_post_2020 <- analysis_cohort_calibration_adj %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
