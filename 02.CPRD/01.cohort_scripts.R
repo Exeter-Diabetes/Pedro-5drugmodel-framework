@@ -30,7 +30,7 @@ library(patchwork)
 
 semaglutide_initiations <- t2d_1stinstance %>%
   filter(
-    drug_substance == "Low-dose semaglutide" | drug_substance == "Oral semaglutide" |
+    drug_substance == "Low-dose semaglutide" | drug_substance == "High-dose semaglutide" |
       drug_substance == "Semaglutide, dose unclear"
   ) %>%
   select(drug_substance, prehba1c, hba1cresp6m, dstartdate) %>%
@@ -231,7 +231,8 @@ analysis_semaglutide <- t2d_1stinstance %>%
   ## Inclusion based on type of drugsubstance:
   ### GLP1-RA - semaglutide
   filter(
-    drug_substance == "Low-dose semaglutide"
+    drug_substance == "Low-dose semaglutide" | drug_substance == "High-dose semaglutide" |
+      drug_substance == "Semaglutide, dose unclear"
   ) %>%
   ## Exclusions
   ### Currently treated with insulin
@@ -271,7 +272,7 @@ analysis_semaglutide <- t2d_1stinstance %>%
   mutate(hba1cmonth_6 = datediff(posthba1c6mdate, dstartdate) / 30) %>%
   mutate(hba1cmonth = ifelse(is.na(hba1cmonth_12), hba1cmonth_6, hba1cmonth_12)) %>%
   filter(!is.na(posthba1cfinal)) %>%
-  analysis$cached("analysis_semaglutide", indexes=c("patid", "dstartdate", "drug_substance"))
+  analysis$cached("analysis_injectable_semaglutide", indexes=c("patid", "dstartdate", "drug_substance"))
 
 
 
