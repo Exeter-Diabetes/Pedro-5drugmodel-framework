@@ -28,7 +28,7 @@ load("fivedrugmodel_5knot_share_20230823.Rdata")
 
 # set up dataset
 analysis_semaglutide_raw <- analysis_semaglutide_raw %>%
-  analysis$cached("analysis_semaglutide") %>%
+  analysis$cached("analysis_injectable_semaglutide") %>%
   collect() %>%
   mutate(patid=as.character(patid)) %>%
   mutate_if(is.integer64, as.integer)
@@ -308,6 +308,10 @@ closed_loop_test_results_GLP1_semaglutide_mice <- closedtest_continuous_function
   p_value = 0.05
 )
 
+## Adjustment used: https://doi.org/10.1016/j.diabres.2021.108904
+## Difference between Fig5 Dulaglutide vs Semaglutide 0.48% (0.17,0.8)
+injectable_semaglutide_hba1c_percent <- 0.48
+injectable_semaglutide_hba1c_mmol <- injectable_semaglutide_hba1c_percent * 10.929
 
 ## Oral semaglutide ----
 
@@ -339,7 +343,7 @@ analysis_post_2020 <- analysis_post_2020 %>%
     pred.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "DPP4")),
     pred.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "TZD")),
     pred.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "SU")),
-    pred.Sema = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_post_2020 %>% mutate(drugclass = "GLP1")),
+    pred.Sema = pred.orig.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
     pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_post_2020 %>% mutate(drugclass = "GLP1"))
   )
 
@@ -385,14 +389,7 @@ analysis_semaglutide <- analysis_semaglutide %>%
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
     )),
-    pred.Sema = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_semaglutide %>% mutate(
-      drugclass = "GLP1",
-      prebmi = prebmi_mice_impute,
-      preegfr = preegfr_mice_impute,
-      pretotalcholesterol = pretotalcholesterol_mice_impute,
-      prehdl = prehdl_mice_impute,
-      prealt = prealt_mice_impute
-    )),
+    pred.Sema = pred.mice.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
     pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_semaglutide %>% mutate(
       drugclass = "GLP1",
       prebmi = prebmi_mice_impute,
@@ -446,14 +443,7 @@ analysis_oral_semaglutide <- analysis_oral_semaglutide %>%
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
     )),
-    pred.Sema = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_oral_semaglutide %>% mutate(
-      drugclass = "GLP1",
-      prebmi = prebmi_mice_impute,
-      preegfr = preegfr_mice_impute,
-      pretotalcholesterol = pretotalcholesterol_mice_impute,
-      prehdl = prehdl_mice_impute,
-      prealt = prealt_mice_impute
-    )),
+    pred.Sema = pred.mice.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
     pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_oral_semaglutide %>% mutate(
       drugclass = "GLP1",
       prebmi = prebmi_mice_impute,
@@ -547,6 +537,7 @@ analysis_semaglutide_calibration <- unified_validation(
 
 final_comparison <- analysis_calibration %>%
   filter(!(drug1 == "Semaglutide" & drug2 == "GLP1")) %>%
+  filter(drug1 == "Semaglutide") %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -578,6 +569,7 @@ final_semaglutide_comparison <- analysis_semaglutide_calibration %>%
   filter(!(drug1 == "Semaglutide" & drug2 == "GLP1") &
            !(drug1 == "Oral semaglutide" & drug2 == "Semaglutide") &
            !(drug1 == "Oral semaglutide" & drug2 == "GLP1")) %>%
+  filter(str_detect(drug1, "Oral semaglutide")) %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -612,7 +604,7 @@ pdf("plot_calibration_semaglutide.pdf", width = 6, height = 4)
 plot_calibration_semaglutide
 dev.off()
 
-pdf("plot_unified_calibration_semaglutide.pdf", width = 12, height = 8)
+pdf("plot_unified_calibration_semaglutide.pdf", width = 6, height = 6)
 plot_unified_calibration
 dev.off()
 
@@ -628,7 +620,7 @@ pdf("plot_calibration_semaglutide.pdf", width = 6, height = 4)
 plot_calibration_oral_semaglutide
 dev.off()
 
-pdf("plot_unified_calibration_semaglutide.pdf", width = 15, height = 8)
+pdf("plot_unified_calibration_semaglutide.pdf", width = 6, height = 6)
 plot_unified_semaglutide_calibration
 dev.off()
 
