@@ -316,7 +316,7 @@ analysis_cohort <- analysis_post_2020 %>%
 ## Tolerance 3 mmol/mol ----
 
 ### Exact matching only on best drug / sex / hba1c_10
-overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_predicted_benefit(
+overall_benefit_tolerance3_match_sex_hba1c <- overall_predicted_benefit(
   data = analysis_cohort %>% mutate(hba1c_group = ntile(prehba1c, 10)),
   drug_var = "drugclass",
   outcome_var = "posthba1cfinal",
@@ -331,7 +331,7 @@ overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_predicted_benefi
 ## Rank 1 ----
 
 ### Exact matching only on best drug / sex / hba1c_10
-overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_predicted_benefit(
+overall_benefit_rank1_match_sex_hba1c <- overall_predicted_benefit(
   data = analysis_cohort %>% mutate(hba1c_group = ntile(prehba1c, 10)),
   drug_var = "drugclass",
   outcome_var = "posthba1cfinal",
@@ -356,7 +356,7 @@ analysis_cohort_calibration_adj <- unified_validation(
 
 
 # PDFs ----
-plot_overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_benefit_tolerance3_post_2020_match_sex_hba1c %>%
+plot_overall_benefit_tolerance3_match_sex_hba1c <- overall_benefit_tolerance3_match_sex_hba1c %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
   geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
@@ -365,9 +365,9 @@ plot_overall_benefit_tolerance3_post_2020_match_sex_hba1c <- overall_benefit_tol
   geom_errorbar() +
   geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
   theme_minimal() +
-  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Post 2020 (tolerance 3mmol) (matching best drug / sex / hba1c_10)")
+  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Best drugs (combination) defined by values closest to best within 3 mmol/mol")
 
-plot_overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_benefit_rank1_post_2020_match_sex_hba1c %>%
+plot_overall_benefit_rank1_match_sex_hba1c <- overall_benefit_rank1_match_sex_hba1c %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
   geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
@@ -376,10 +376,10 @@ plot_overall_benefit_rank1_post_2020_match_sex_hba1c <- overall_benefit_rank1_po
   geom_errorbar() +
   geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
   theme_minimal() +
-  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Post 2020 (matching best drug / sex / hba1c_10)")
+  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Best drug defined by best predicted response")
 
 
-plot_unified_validation_post_2020 <- analysis_cohort_calibration_adj %>%
+plot_unified_validation <- analysis_cohort_calibration_adj %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -406,12 +406,12 @@ plot_unified_validation_post_2020 <- analysis_cohort_calibration_adj %>%
 
 
 pdf("plot_overall_benefits.pdf", width = 7, height = 5)
-plot_overall_benefit_tolerance3_post_2020_match_sex_hba1c
-plot_overall_benefit_rank1_post_2020_match_sex_hba1c
+plot_overall_benefit_tolerance3_match_sex_hba1c
+plot_overall_benefit_rank1_match_sex_hba1c
 dev.off()
 
 pdf("plot_unified_validation.pdf", width = 12, height = 5)
-plot_unified_validation_post_2020
+plot_unified_validation
 dev.off()
 
 # combine plots
