@@ -30,7 +30,7 @@ analysis_pre_2020_raw <- analysis_pre_2020_raw %>%
   mutate_if(is.integer64, as.integer)
 
 analysis_semaglutide <- analysis_semaglutide %>%
-  analysis$cached("analysis_semaglutide") %>%
+  analysis$cached("analysis_injectable_semaglutide") %>%
   collect() %>%
   mutate(patid = as.character(patid)) %>%
   mutate_if(is.integer64, as.integer)
