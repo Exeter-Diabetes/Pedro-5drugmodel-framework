@@ -311,6 +311,26 @@ analysis_cohort <- analysis_post_2020 %>%
   ) %>%
   filter(agetx <= 40)
 
+
+# Best drugs ----
+
+### MICE imputation model predictions
+analysis_cohort <- get_best_drugs(
+  data = analysis_cohort,
+  tolerance = 3,
+  column_names = paste0("pred.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  final_var_name = "pred."
+)
+
+groups <- list(
+  "1-drug combination" = 1,
+  "2-drug combinations" = 2,
+  "3-drug combinations" = 3,
+  "3/4/5-drug combinations" = 4:5
+)
+
+plot_optimal_drugs <- optimal_drug_comparison_plot(analysis_cohort$pred.within_3_of_best_drug_name, groups)
+
 # Overall calibration (plot benefit) #########################################
 
 ## Tolerance 3 mmol/mol ----
@@ -414,8 +434,12 @@ pdf("plot_unified_validation.pdf", width = 12, height = 5)
 plot_unified_validation
 dev.off()
 
+pdf("plot_optimal_drugs.pdf", width = 13, height = 5)
+plot_optimal_drugs
+dev.off()
+
 # combine plots
-pdf_files <- c("plot_overall_benefits.pdf", "plot_unified_validation.pdf")
+pdf_files <- c("plot_overall_benefits.pdf", "plot_unified_validation.pdf", "plot_optimal_drugs.pdf")
 
 # Combine PDFs
 pdf_combine(input = pdf_files, output = "Outputs/CPRD/09.under_40.pdf")
