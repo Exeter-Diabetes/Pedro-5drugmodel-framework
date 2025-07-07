@@ -538,6 +538,7 @@ analysis_semaglutide_calibration <- unified_validation(
 final_comparison <- analysis_calibration %>%
   filter(!(drug1 == "Semaglutide" & drug2 == "GLP1")) %>%
   filter(drug1 == "Semaglutide") %>%
+  mutate(drug1 = gsub("Semaglutide", 'Injectable semaglutide', drug1)) %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -553,6 +554,22 @@ final_comparison <- analysis_calibration %>%
 
 
 plot_unified_calibration <- final_comparison %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -585,6 +602,22 @@ final_semaglutide_comparison <- analysis_semaglutide_calibration %>%
 
 
 plot_unified_semaglutide_calibration <- final_semaglutide_comparison %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +

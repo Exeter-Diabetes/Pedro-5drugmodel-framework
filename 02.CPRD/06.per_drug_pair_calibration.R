@@ -752,6 +752,22 @@ analysis_post_2020_orig_calibration %>%
     analysis_post_2020_mice_calibration %>%
       mutate(Imputation = "MICE")
   ) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Imputation)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -777,6 +793,22 @@ analysis_post_2020_orig_calibration_adj %>%
       mutate(Method = "Matching + Adj")
   ) %>%
   filter(n_groups == 10) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -796,6 +828,22 @@ analysis_post_2020_orig_calibration_adj %>%
       mutate(Method = "Matching + Adj")
   ) %>%
   filter(n_groups == 5) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -826,8 +874,63 @@ analysis_post_2020_orig_calibration_adj %>%
   ungroup() %>%
   filter(select_grouping == n_groups) %>%
   select(-c(drugcombo, min_val, select_grouping)) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
+  geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
+  geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
+  geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
+  geom_point() +
+  geom_errorbar() +
+  facet_wrap(~title, nrow = 2) +
+  theme_minimal() +
+  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Groups have at least 100 individuals on either drug")
+analysis_post_2020_orig_calibration_adj %>%
+  mutate(drugcombo = paste(drug1, drug2)) %>%
+  group_by(drugcombo, n_groups) %>%
+  mutate(min_val = min(n_drug1, n_drug2)) %>%
+  ungroup(n_groups) %>%
+  mutate(
+    select_grouping = ifelse(min_val > 100, n_groups, NA),
+    select_grouping = max(select_grouping, na.rm = TRUE),
+    select_grouping = ifelse(is.infinite(abs(select_grouping)), 3, select_grouping)
+  ) %>%
+  ungroup() %>%
+  filter(select_grouping == n_groups) %>%
+  select(-c(drugcombo, min_val, select_grouping)) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
+  mutate(title = paste(drug1, "vs", drug2)) %>%
+  ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
   geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
   geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
@@ -850,6 +953,22 @@ analysis_pre_2020_orig_calibration_adj %>%
       mutate(Method = "Matching + Adj")
   ) %>%
   filter(n_groups == 10) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -869,6 +988,22 @@ analysis_pre_2020_orig_calibration_adj %>%
       mutate(Method = "Matching + Adj")
   ) %>%
   filter(n_groups == 5) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
@@ -899,8 +1034,63 @@ analysis_pre_2020_orig_calibration_adj %>%
   ungroup() %>%
   filter(select_grouping == n_groups) %>%
   select(-c(drugcombo, min_val, select_grouping)) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
   mutate(title = paste(drug1, "vs", drug2)) %>%
   ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high, colour = Method)) +
+  geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
+  geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
+  geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
+  geom_point() +
+  geom_errorbar() +
+  facet_wrap(~title, nrow = 2) +
+  theme_minimal() +
+  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Groups have at least 100 individuals on either drug")
+analysis_pre_2020_orig_calibration_adj %>%
+  mutate(drugcombo = paste(drug1, drug2)) %>%
+  group_by(drugcombo, n_groups) %>%
+  mutate(min_val = min(n_drug1, n_drug2)) %>%
+  ungroup(n_groups) %>%
+  mutate(
+    select_grouping = ifelse(min_val > 100, n_groups, NA),
+    select_grouping = max(select_grouping, na.rm = TRUE),
+    select_grouping = ifelse(is.infinite(abs(select_grouping)), 3, select_grouping)
+  ) %>%
+  ungroup() %>%
+  filter(select_grouping == n_groups) %>%
+  select(-c(drugcombo, min_val, select_grouping)) %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
+  mutate(title = paste(drug1, "vs", drug2)) %>%
+  ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
   geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
   geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
   geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
