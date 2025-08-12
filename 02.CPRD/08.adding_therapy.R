@@ -45,12 +45,19 @@ analysis_post_2020_raw <- analysis_post_2020_raw %>%
   mutate(patid=as.character(patid)) %>%
   mutate_if(is.integer64, as.integer)
 
+analysis_pre_2020_raw <- analysis_pre_2020_raw %>%
+  analysis$cached("analysis_pre_2020") %>%
+  collect() %>%
+  mutate(patid=as.character(patid)) %>%
+  mutate_if(is.integer64, as.integer)
+
 
 
 # Pre-processing datasets ########################################
 
 ## Post 2020-10-14 ----
-analysis_post_2020 <- analysis_post_2020_raw %>%
+analysis_standard <- analysis_post_2020_raw %>%
+  rbind(analysis_pre_2020_raw) %>%
   mutate(
     pated = paste(patid, dstartdate, drug_class, sep = "."),
     sex = factor(gender, levels = c(1, 2), labels = c("Male", "Female")),
@@ -185,14 +192,14 @@ analysis_oral_semaglutide_mice_imputation <- imputation_methods(data = analysis_
 
 ## Post 2020-10-14 ----
 ### Original variables
-analysis_post_2020_prediction_orig <- predict_5drugmodel(analysis_post_2020,
+analysis_post_2020_prediction_orig <- predict_5drugmodel(analysis_standard,
                                                          model = m1.5.final,
                                                          drug_var = "drugclass",
                                                          drugs = c("SGLT2", "GLP1", "DPP4", "TZD", "SU"),
                                                          pred_col = "pred.orig.")
 
 ### merge impute columns into main dataset
-analysis_post_2020 <- analysis_post_2020 %>%
+analysis_standard <- analysis_standard %>%
   cbind(
     analysis_post_2020_prediction_orig %>%
       select(contains("pred.orig")) %>%
@@ -209,6 +216,9 @@ analysis_semaglutide_prediction_mice <- predict_5drugmodel(analysis_semaglutide_
 
 
 ### merge impute columns into main dataset
+
+n_train <- floor(0.2 * nrow(analysis_semaglutide))
+
 analysis_semaglutide <- analysis_semaglutide %>%
   cbind(
     analysis_semaglutide_prediction_mice %>%
@@ -216,7 +226,9 @@ analysis_semaglutide <- analysis_semaglutide %>%
     analysis_semaglutide_prediction_mice %>%
       select(contains("pred.mice")) %>%
       rename_with(~ str_replace(., "pred\\.mice\\.", "pred.mice.preclosed."))
-  )
+  ) %>%
+  mutate(split = ifelse(row_number() %in% sample(nrow(analysis_semaglutide), n_train), "training", "testing"))
+  
 
 
 ## Oral semaglutide ----
@@ -246,7 +258,7 @@ analysis_oral_semaglutide <- analysis_oral_semaglutide %>%
 #### SGLT2
 closed_loop_test_results_SGLT2_post_2020_orig <- closedtest_continuous_function(
   cohort = "SGLT2 subcohort",
-  dataset = analysis_post_2020 %>% filter(drugclass == "SGLT2") %>% drop_na(),
+  dataset = analysis_standard %>% filter(drugclass == "SGLT2") %>% drop_na(),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -255,7 +267,7 @@ closed_loop_test_results_SGLT2_post_2020_orig <- closedtest_continuous_function(
 #### GLP1
 closed_loop_test_results_GLP1_post_2020_orig <- closedtest_continuous_function(
   cohort = "GLP1 subcohort",
-  dataset = analysis_post_2020 %>% filter(drugclass == "GLP1") %>% drop_na(),
+  dataset = analysis_standard %>% filter(drugclass == "GLP1") %>% drop_na(),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -264,7 +276,7 @@ closed_loop_test_results_GLP1_post_2020_orig <- closedtest_continuous_function(
 #### DPP4
 closed_loop_test_results_DPP4_post_2020_orig <- closedtest_continuous_function(
   cohort = "DPP4 subcohort",
-  dataset = analysis_post_2020 %>% filter(drugclass == "DPP4") %>% drop_na(),
+  dataset = analysis_standard %>% filter(drugclass == "DPP4") %>% drop_na(),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -273,7 +285,7 @@ closed_loop_test_results_DPP4_post_2020_orig <- closedtest_continuous_function(
 #### TZD
 closed_loop_test_results_TZD_post_2020_orig <- closedtest_continuous_function(
   cohort = "TZD subcohort",
-  dataset = analysis_post_2020 %>% filter(drugclass == "TZD") %>% drop_na(),
+  dataset = analysis_standard %>% filter(drugclass == "TZD") %>% drop_na(),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -282,7 +294,7 @@ closed_loop_test_results_TZD_post_2020_orig <- closedtest_continuous_function(
 #### SU
 closed_loop_test_results_SU_post_2020_orig <- closedtest_continuous_function(
   cohort = "SU subcohort",
-  dataset = analysis_post_2020 %>% filter(drugclass == "SU") %>% drop_na(),
+  dataset = analysis_standard %>% filter(drugclass == "SU") %>% drop_na(),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -302,7 +314,8 @@ closed_loop_test_results_GLP1_semaglutide_mice <- closedtest_continuous_function
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    ),
+    ) %>%
+    filter(split == "training"),
   original_model = m1.5.final,
   outcome_name = "posthba1cfinal",
   p_value = 0.05
@@ -335,19 +348,21 @@ closed_loop_test_results_GLP1_oral_semaglutide_mice <- closedtest_continuous_fun
 
 
 ## Make predictions ----
-analysis_post_2020 <- analysis_post_2020 %>%
+analysis_standard <- analysis_standard %>%
   mutate(
     # original variables
-    pred.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "SGLT2")),
-    pred.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "GLP1")),
-    pred.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "DPP4")),
-    pred.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "TZD")),
-    pred.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_post_2020 %>% mutate(drugclass = "SU")),
+    pred.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_orig, analysis_standard %>% mutate(drugclass = "SGLT2")),
+    pred.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_orig, analysis_standard %>% mutate(drugclass = "GLP1")),
+    pred.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_orig, analysis_standard %>% mutate(drugclass = "DPP4")),
+    pred.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_orig, analysis_standard %>% mutate(drugclass = "TZD")),
+    pred.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_standard %>% mutate(drugclass = "SU")),
     pred.Sema = pred.orig.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
-    pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_post_2020 %>% mutate(drugclass = "GLP1"))
+    pred.Sema.data = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_standard %>% mutate(drugclass = "GLP1")),
+    pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_standard %>% mutate(drugclass = "GLP1"))
   )
 
 analysis_semaglutide <- analysis_semaglutide %>%
+  filter(split == "testing") %>%
   mutate(
     pred.SGLT2 = predict_with_modelchoice_function(closed_loop_test_results_SGLT2_post_2020_orig, analysis_semaglutide %>% mutate(
       drugclass = "SGLT2",
@@ -356,7 +371,8 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    )),
+    ) %>%
+      filter(split == "testing")),
     pred.GLP1 = predict_with_modelchoice_function(closed_loop_test_results_GLP1_post_2020_orig, analysis_semaglutide %>% mutate(
       drugclass = "GLP1",
       prebmi = prebmi_mice_impute,
@@ -364,7 +380,8 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    )),
+    ) %>%
+      filter(split == "testing")),
     pred.DPP4 = predict_with_modelchoice_function(closed_loop_test_results_DPP4_post_2020_orig, analysis_semaglutide %>% mutate(
       drugclass = "DPP4",
       prebmi = prebmi_mice_impute,
@@ -372,7 +389,8 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    )),
+    ) %>%
+      filter(split == "testing")),
     pred.TZD = predict_with_modelchoice_function(closed_loop_test_results_TZD_post_2020_orig, analysis_semaglutide %>% mutate(
       drugclass = "TZD",
       prebmi = prebmi_mice_impute,
@@ -380,7 +398,8 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    )),
+    ) %>%
+      filter(split == "testing")),
     pred.SU = predict_with_modelchoice_function(closed_loop_test_results_SU_post_2020_orig, analysis_semaglutide %>% mutate(
       drugclass = "SU",
       prebmi = prebmi_mice_impute,
@@ -388,8 +407,18 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    )),
+    ) %>%
+      filter(split == "testing")),
     pred.Sema = pred.mice.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
+    pred.Sema.data = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_semaglutide %>% mutate(
+      drugclass = "GLP1",
+      prebmi = prebmi_mice_impute,
+      preegfr = preegfr_mice_impute,
+      pretotalcholesterol = pretotalcholesterol_mice_impute,
+      prehdl = prehdl_mice_impute,
+      prealt = prealt_mice_impute
+    ) %>%
+      filter(split == "testing")),
     pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_semaglutide %>% mutate(
       drugclass = "GLP1",
       prebmi = prebmi_mice_impute,
@@ -397,7 +426,8 @@ analysis_semaglutide <- analysis_semaglutide %>%
       pretotalcholesterol = pretotalcholesterol_mice_impute,
       prehdl = prehdl_mice_impute,
       prealt = prealt_mice_impute
-    ))
+    ) %>%
+      filter(split == "testing"))
   )
 
 
@@ -444,6 +474,14 @@ analysis_oral_semaglutide <- analysis_oral_semaglutide %>%
       prealt = prealt_mice_impute
     )),
     pred.Sema = pred.mice.preclosed.GLP1 - injectable_semaglutide_hba1c_mmol,
+    pred.Sema.data = predict_with_modelchoice_function(closed_loop_test_results_GLP1_semaglutide_mice, analysis_oral_semaglutide %>% mutate(
+      drugclass = "GLP1",
+      prebmi = prebmi_mice_impute,
+      preegfr = preegfr_mice_impute,
+      pretotalcholesterol = pretotalcholesterol_mice_impute,
+      prehdl = prehdl_mice_impute,
+      prealt = prealt_mice_impute
+    )),
     pred.Oral = predict_with_modelchoice_function(closed_loop_test_results_GLP1_oral_semaglutide_mice, analysis_oral_semaglutide %>% mutate(
       drugclass = "GLP1",
       prebmi = prebmi_mice_impute,
@@ -456,6 +494,66 @@ analysis_oral_semaglutide <- analysis_oral_semaglutide %>%
 
 
 # Calibration plots ########################################
+
+
+# ## calibration in large / calibration slope
+# 
+# test_preclosed <- analysis_oral_semaglutide %>%
+#   select(matches("mice\\.preclosed|drugclass|posthba1cfinal|prehba1c")) %>%
+#   rename_with(~ sub("^pred\\.mice\\.preclosed\\.", "pred.", .), matches("^pred\\.mice\\.preclosed\\.")) %>%
+#   rowwise() %>%
+#   mutate(pred_value = get(paste0("pred.", drugclass))) %>%
+#   ungroup()
+# 
+# # Define the groups to loop over (including "Overall")
+# groups <- c("GLP1")
+# 
+# # Loop through each group and bind results
+# results <- bind_rows(
+#   lapply(groups, function(g) {
+#     data <- if (g == "Overall") test_preclosed else filter(test_preclosed, drugclass == g)
+#     model <- lm(posthba1cfinal ~ pred_value, data = data)
+# 
+#     tidy(model) %>%
+#       select(term, estimate) %>%
+#       bind_cols(
+#         confint(model) %>%
+#           as.data.frame() %>%
+#           rename(conf.low = `2.5 %`, conf.high = `97.5 %`)
+#       ) %>%
+#       mutate(Term = g)
+#   })
+# )
+# 
+# test_preclosed <- analysis_semaglutide %>%
+#   select(matches("mice\\.preclosed|drugclass|posthba1cfinal|prehba1c")) %>%
+#   rename_with(~ sub("^pred\\.mice\\.preclosed\\.", "pred.", .), matches("^pred\\.mice\\.preclosed\\.")) %>%
+#   rowwise() %>%
+#   mutate(pred_value = get(paste0("pred.", drugclass))) %>%
+#   ungroup()
+# 
+# # Define the groups to loop over (including "Overall")
+# groups <- c("GLP1")
+# 
+# # Loop through each group and bind results
+# results <- bind_rows(
+#   lapply(groups, function(g) {
+#     data <- if (g == "Overall") test_preclosed else filter(test_preclosed, drugclass == g)
+#     model <- lm(posthba1cfinal ~ pred_value, data = data)
+#     
+#     tidy(model) %>%
+#       select(term, estimate) %>%
+#       bind_cols(
+#         confint(model) %>%
+#           as.data.frame() %>%
+#           rename(conf.low = `2.5 %`, conf.high = `97.5 %`)
+#       ) %>%
+#       mutate(Term = g)
+#   })
+# )
+
+
+
 
 plot_calibration_semaglutide <- analysis_semaglutide %>%
   select(posthba1cfinal, pred.Sema, pred.GLP1, pred.mice.preclosed.GLP1) %>%
@@ -485,13 +583,89 @@ plot_calibration_oral_semaglutide <- analysis_oral_semaglutide %>%
     legend.position = "bottom"
   )
 
+
+# Best drug graph
+combinations_standard <- get_best_drugs(
+  data = analysis_semaglutide,
+  rank = 1,
+  column_names = paste0("pred.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  final_var_name = "pred."
+)
+
+combinations_inject <- get_best_drugs(
+  data = analysis_semaglutide,
+  rank = 1,
+  column_names = paste0("pred.", c("Sema", "SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  final_var_name = "pred."
+)
+
+
+plot_data <- combinations_standard %>%
+  select(pred.rank1_drug_name) %>%
+  table() %>%
+  as.data.frame() %>%
+  set_names(c("drug", "Freq_standard")) %>%
+  mutate(Percent_standard = Freq_standard / sum(Freq_standard) * 100) %>%
+  full_join(
+    combinations_inject %>%
+      select(pred.rank1_drug_name) %>%
+      table() %>%
+      as.data.frame() %>%
+      set_names(c("drug", "Freq_inject")) %>%
+      mutate(Percent_inject = Freq_inject / sum(Freq_inject) * 100)
+  ) %>%
+  select(drug, Percent_standard, Percent_inject) %>%
+  pivot_longer(
+    cols = starts_with("Percent"),
+    names_to = "Type",
+    values_to = "Percent"
+  ) %>%
+  mutate(Type = recode(Type,
+                       "Percent_standard" = "Standard",
+                       "Percent_inject" = "Inject")) %>%
+  mutate(drug = gsub("Sema", "Injectable semaglutide", drug))
+
+viridis_colors <- c(viridis(5, option = "D"))
+names(viridis_colors) <- c("DPP4", "GLP1", "SGLT2", "SU", "TZD")
+
+plot_data %>%
+  filter(Type == "Standard") %>%
+  ggplot(aes(x = Type, y = Percent, fill = drug)) +
+  geom_col(position = "fill") + 
+  scale_fill_manual(values = viridis_colors) +
+  coord_flip() +
+  theme_void() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+
+viridis_colors <- c(viridis(5, option = "D"), "grey")
+names(viridis_colors) <- c("DPP4", "GLP1", "SGLT2", "SU", "TZD", "Injectable semaglutide")
+
+plot_data %>%
+  filter(Type == "Inject") %>%
+  ggplot(aes(x = Type, y = Percent, fill = drug)) +
+  geom_col(position = "fill") + 
+  scale_fill_manual(values = viridis_colors) +
+  coord_flip() +
+  theme_void() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+
+
 # Unified validation ########################################
-interim_dataset <- analysis_post_2020 %>%
+interim_dataset <- analysis_standard %>%
   rename("drugclass_old" = "drugclass") %>%
   mutate(drugclass = drugclass_old) %>%
   select(-matches("preclosed")) %>%
   rbind(
     analysis_semaglutide %>%
+      select(-split) %>%
       rename("drugclass_old" = "drugclass") %>%
       mutate(drugclass = "Semaglutide") %>%
       mutate(
@@ -525,6 +699,16 @@ analysis_calibration <- unified_validation(
   adjustment_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
 )
 
+analysis_calibration_datadriven <- unified_validation(
+  data = interim_dataset, 
+  drug_var = "drugclass",
+  drugs = c("Semaglutide", "SGLT2", "GLP1", "TZD", "SU", "DPP4"),
+  prediction_vars = c("pred.Sema.data", "pred.SGLT2", "pred.GLP1", "pred.TZD", "pred.SU", "pred.DPP4"),
+  outcome_var = "posthba1cfinal",
+  cal_groups = c(3, 5, 10),
+  adjustment_var = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "sex", "smoke", "imd5", "ncurrtx", "drugline")
+)
+
 analysis_semaglutide_calibration <- unified_validation(
   data = interim_dataset, 
   drug_var = "drugclass",
@@ -552,8 +736,53 @@ final_comparison <- analysis_calibration %>%
   filter(select_grouping == n_groups) %>%
   select(-c(drugcombo, min_val, select_grouping)) 
 
+final_comparison_datadriven <- analysis_calibration_datadriven %>%
+  filter(!(drug1 == "Semaglutide" & drug2 == "GLP1")) %>%
+  filter(drug1 == "Semaglutide") %>%
+  mutate(drug1 = gsub("Semaglutide", 'Injectable semaglutide', drug1)) %>%
+  mutate(drugcombo = paste(drug1, drug2)) %>%
+  group_by(drugcombo, n_groups) %>%
+  mutate(min_val = min(n_drug1, n_drug2)) %>%
+  ungroup(n_groups) %>%
+  mutate(
+    select_grouping = ifelse(min_val > 100, n_groups, NA),
+    select_grouping = max(select_grouping, na.rm = TRUE),
+    select_grouping = ifelse(is.infinite(abs(select_grouping)), 3, select_grouping)
+  ) %>%
+  ungroup() %>%
+  filter(select_grouping == n_groups) %>%
+  select(-c(drugcombo, min_val, select_grouping)) 
+
 
 plot_unified_calibration <- final_comparison %>%
+  mutate(
+    drug1 = case_when(
+      drug1 == "Semaglutide" ~ "Injectable semaglutide",
+      drug1 == "SGLT2" ~ "SGLT2i",
+      drug1 == "GLP1" ~ "GLP-1RA",
+      drug1 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug1
+    ),
+    drug2 = case_when(
+      drug2 == "Semaglutide" ~ "Injectable semaglutide",
+      drug2 == "SGLT2" ~ "SGLT2i",
+      drug2 == "GLP1" ~ "GLP-1RA",
+      drug2 == "DPP4" ~ "DPP4i",
+      TRUE ~ drug2
+    ),
+  ) %>%
+  mutate(title = paste(drug1, "vs", drug2)) %>%
+  ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
+  geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
+  geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
+  geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
+  geom_point() +
+  geom_errorbar() +
+  facet_wrap(~title, nrow = 3) +
+  theme_minimal() +
+  labs(x = "Predicted HbA1c benefit (mmol/mol)", y = "Observed HbA1c benefit* (mmol/mol)", title = "Linear adjustment")
+
+plot_unified_calibration_datadriven <- final_comparison_datadriven %>%
   mutate(
     drug1 = case_when(
       drug1 == "Semaglutide" ~ "Injectable semaglutide",
@@ -639,6 +868,7 @@ dev.off()
 
 pdf("plot_unified_calibration_semaglutide.pdf", width = 6, height = 6)
 plot_unified_calibration
+plot_unified_calibration_datadriven
 dev.off()
 
 # combine plots
