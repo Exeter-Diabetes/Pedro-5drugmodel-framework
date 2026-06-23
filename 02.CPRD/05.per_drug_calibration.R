@@ -572,6 +572,44 @@ analysis_pre_2020 <- analysis_pre_2020 %>%
 
 # Calibration of Predictions ##########################################
 
+# ## calibration in large / calibration slope
+# 
+# test_preclosed <- analysis_pre_2020 %>%
+#   select(matches("preclosed|drugclass|posthba1cfinal|prehba1c")) %>%
+#   rename_with(~ sub("^pred\\.orig\\.preclosed\\.", "pred.", .), matches("^pred\\.orig\\.preclosed\\.")) %>%
+#   rbind(
+#     analysis_post_2020 %>%
+#       select(matches("mice\\.preclosed|drugclass|posthba1cfinal|prehba1c")) %>%
+#       rename_with(~ sub("^pred\\.mice\\.preclosed\\.", "pred.", .), matches("^pred\\.mice\\.preclosed\\."))
+#   ) %>%
+#   rowwise() %>%
+#   mutate(pred_value = get(paste0("pred.", drugclass))) %>%
+#   ungroup()
+# 
+# # Define the groups to loop over (including "Overall")
+# groups <- c("Overall", "SGLT2", "GLP1", "DPP4", "TZD", "SU")
+# 
+# # Loop through each group and bind results
+# results <- bind_rows(
+#   lapply(groups, function(g) {
+#     data <- if (g == "Overall") test_preclosed else filter(test_preclosed, drugclass == g)
+#     model <- lm(posthba1cfinal ~ pred_value, data = data)
+#     
+#     tidy(model) %>%
+#       select(term, estimate) %>%
+#       bind_cols(
+#         confint(model) %>%
+#           as.data.frame() %>%
+#           rename(conf.low = `2.5 %`, conf.high = `97.5 %`)
+#       ) %>%
+#       mutate(Term = g)
+#   })
+# )
+
+
+
+
+
 ## Post 2020-10-14 ----
 plot_pred_response_analysis_post_2020_preclosed <- analysis_post_2020 %>%
   pivot_longer(cols = contains("pred.orig.preclosed")) %>%
@@ -694,6 +732,14 @@ analysis_post_2020 <- get_best_drugs(
   final_var_name = "pred.mice."
 )
 
+### Orig pre 2020
+analysis_pre_2020 <- get_best_drugs(
+  data = analysis_pre_2020,
+  rank = 1,
+  column_names = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  final_var_name = "pred.orig."
+)
+
 ## Tolerance 3 mmol/mol ----
 ### Orig
 analysis_post_2020 <- get_best_drugs(
@@ -727,8 +773,129 @@ analysis_pre_2020 <- get_best_drugs(
   final_var_name = "pred.orig."
 )
 
+# #### check benefit of concordant
+# test <- get_best_drugs(
+#   data = analysis_pre_2020,
+#   rank = 1,
+#   column_names = paste0("pred.orig.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+#   final_var_name = "pred.orig."
+# ) %>%
+#   mutate(
+#     concordant = ifelse(drugclass == pred.orig.rank1_drug_name, "concordant", "discordant")
+#   )
+# 
+# lm(posthba1cfinal ~ concordant + prehba1c, data = test)
 
 
+# Custom plot ----
+
+interim <- analysis_pre_2020 %>%
+  select(best_drug = pred.orig.rank1_drug_name, sex, prebmi, preegfr, agetx, prealt, prehba1c) %>%
+  filter(best_drug != "DPP4")
+
+
+# colours for drugs
+drug_colours_github <- c(
+  "SGLT2" = "#E69F00",
+  "GLP1"= "#56B4E9",
+  "SU" = "#CC79A7",
+  "DPP4" = "#0072B2",
+  "TZD" = "#D55E00",
+  "Inje" = "grey"
+)
+
+# --- Sex panel (only % Female, no y-axis title) ---
+p_sex <- interim %>%
+  count(best_drug, sex) %>%
+  group_by(best_drug) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(sex == "Female") %>%
+  ggplot(aes(x = best_drug, y = pct, fill = best_drug)) +
+  geom_col() +
+  scale_fill_manual(values = drug_colours_github) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Sex (female)", title = "Female") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    axis.title.x = element_blank()
+  )
+
+# --- Function for continuous boxplots (no y-axis title) ---
+# --- Function for continuous boxplots (axis limited to whiskers) ---
+make_boxplot <- function(df, var, title, ylab) {
+  # compute boxplot stats
+  stats <- ggplot_build(
+    ggplot(df, aes(x = best_drug, y = .data[[var]])) +
+      geom_boxplot(outlier.shape = NA)
+  )$data[[1]]
+  
+  # get whisker min and max across all drugs
+  y_min <- min(stats$ymin, na.rm = TRUE)
+  y_max <- max(stats$ymax, na.rm = TRUE)
+  
+  ggplot(df, aes(x = best_drug, y = .data[[var]], fill = best_drug)) +
+    geom_boxplot(outlier.shape = NA) +
+    scale_fill_manual(values = drug_colours_github) +
+    labs(y = ylab, title = title) +
+    coord_cartesian(ylim = c(y_min, y_max)) +  # set axis limits to whiskers
+    theme_classic() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      axis.title.x = element_blank()
+    )
+}
+
+p_prebmi   <- make_boxplot(interim, "prebmi", "BMI", "BMI (kg/m²)")
+p_preegfr  <- make_boxplot(interim, "preegfr", "eGFR", "eGFR (ml/min/ per 1.73 m²)") +
+  scale_y_continuous(n.breaks = 6)
+p_agetx    <- make_boxplot(interim, "agetx", "Age Tx", "Current age (years)")
+p_prealt   <- make_boxplot(interim, "prealt", "ALT", "ALT (IU/L)")
+p_prehba1c <- make_boxplot(interim, "prehba1c", "HbA1c", "Baseline HbA1c (mmol/mol)")
+
+# --- Combine plots in one row ---
+final_plot_a <- patchwork::wrap_plots(
+  p_sex, p_prebmi, p_agetx, p_preegfr, p_prealt,
+  nrow = 1
+) &
+  theme(
+    plot.title = element_blank(),
+    # axis.text.y = element_text(size = 14),
+    # axis.title.y = element_text(size = 16),
+    plot.margin = margin(5, 6, 5, 6)  # top, right, bottom, left
+  )
+
+final_plot_b <- patchwork::wrap_plots(
+  p_sex, p_prebmi, p_agetx, p_prealt,
+  nrow = 1
+) &
+  theme(
+    plot.title = element_blank(),
+    # axis.text.y = element_text(size = 14),
+    # axis.title.y = element_text(size = 16),
+    plot.margin = margin(5, 6, 5, 6)  # top, right, bottom, left
+  )
+
+
+pdf("test_plot_a.pdf", width = 10, height = 4)
+final_plot_a
+dev.off()
+
+pdf("test_plot_b.pdf", width = 8, height = 4)
+final_plot_b
+dev.off()
+
+
+# Merge PDFs
+qpdf::pdf_combine(
+  input = c("test_plot_a.pdf", "test_plot_b.pdf"),
+  output = "test_plot.pdf"
+)
+
+# Delete the old files
+file.remove("test_plot_a.pdf", "test_plot_b.pdf")
 
 # Overall calibration (summary) #########################################
 
