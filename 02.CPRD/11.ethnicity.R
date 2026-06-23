@@ -452,15 +452,28 @@ overall_benefit_asian <- cateval::compute_overall_benefit(
 )
 
 ## Black ----
+
+
+analysis_black <- get_best_drugs(
+  data = analysis_black,
+  rank = 1,
+  column_names = paste0("pred.", c("SGLT2", "GLP1", "DPP4", "TZD", "SU")),
+  final_var_name = "pred."
+)
+
+
 overall_benefit_black <- cateval::compute_overall_benefit(
-  data = analysis_black %>% mutate(hba1c_group = ntile(prehba1c, 10)),
+  data = analysis_black %>% mutate(hba1c_group = ntile(prehba1c, 20)),
   drug_var = "drugclass",
   outcome_var = "posthba1cfinal",
-  cal_groups = 5,
+  cal_groups = 10,
   pred_cols = paste0("pred.", c("DPP4", "GLP1", "SGLT2", "SU", "TZD")),
   matching_var = c("t2dmduration", "prebmi", "agetx", "prealt", "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth", "smoke", "imd5", "ncurrtx", "drugline"),
   match.exact = c("sex", "hba1c_group")
 )
+
+
+
 
 ## Other/Mixed/Missing ----
 overall_benefit_other <- cateval::compute_overall_benefit(
