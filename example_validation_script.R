@@ -25,7 +25,6 @@
 # load required libraries
 library(tidyverse)
 library(tableone)
-library(cobalt) # balance (love) plots as ggplot objects
 # remotes::install_github("PM-Cardoso/cateval")
 library(cateval) # Custom R package developed by Pedro for calibration evaluation
 
@@ -372,7 +371,7 @@ adjustment_vars = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
                      "sex", "smoke", "ncurrtx", "drugline")
 
 ### Original predictions
-pairwise_results_original <- cateval::unified_validation(
+pairwise_results_original <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
@@ -421,7 +420,7 @@ plot_pairwise_original <- pairwise_results_original %>%
 
 
 ### Prognostic factor adjustment with original predictions
-pairwise_results_original_adj <- cateval::unified_validation(
+pairwise_results_original_adj <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
@@ -470,7 +469,7 @@ plot_pairwise_original_adj <- pairwise_results_original_adj %>%
 
 
 ### Intercept recalibrated predictions
-pairwise_results_intercept <- cateval::unified_validation(
+pairwise_results_intercept <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
@@ -519,7 +518,7 @@ plot_pairwise_intercept <- pairwise_results_intercept %>%
 
 
 ### Intercept + slope recalibrated predictions
-pairwise_results_intercept_slope <- cateval::unified_validation(
+pairwise_results_intercept_slope <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
@@ -605,12 +604,12 @@ n_boot <- 1000
 boot_seed <- 42
 
 # ---- Local plotting helpers ----
-# Points are the mean observed benefit per group (from benefit_deciles() /
+# Points are the mean observed benefit per group (from benefit_by_group() /
 # benefit_by_drug()), with a confidence interval, against the mean predicted
 # benefit. The dashed blue curve is a LOESS fit through these group point
 # estimates themselves (not the individual matched pairs), so the curve
 # summarises exactly the points shown, not the noisier patient-level data.
-# The `n` column from benefit_deciles() is the number of matched pairs in each
+# The `n` column from benefit_by_group() is the number of matched pairs in each
 # group, so its sum is the total number of pairs reported in the subtitle.
 plot_calibration <- function(deciles, title = NULL) {
   n_pairs <- sum(deciles$n, na.rm = TRUE)
@@ -692,13 +691,13 @@ match_original <- cateval::match_benefit_pairs(
 )
 
 # group the matched pairs into deciles of predicted benefit, for each population
-deciles_original_conc <- cateval::benefit_deciles(match_original$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_original_disc <- cateval::benefit_deciles(match_original$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_original_both <- cateval::benefit_deciles(match_original$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_original_conc <- cateval::benefit_by_group(match_original$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_original_disc <- cateval::benefit_by_group(match_original$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_original_both <- cateval::benefit_by_group(match_original$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 # mean observed benefit of following the model, and calibration slope / intercept
 overall_original     <- cateval::benefit_overall(match_original$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_original <- cateval::benefit_calibration(match_original$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_original <- cateval::benefit_citl_slope(match_original$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 # calibration plot for each matched population, then the three side by side
 plot_original_conc <- plot_calibration(deciles_original_conc, title = "Concordant matched to discordant")
@@ -729,12 +728,12 @@ match_controlled <- cateval::match_benefit_pairs(
   seed = 19840503
 )
 
-deciles_controlled_conc <- cateval::benefit_deciles(match_controlled$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_controlled_disc <- cateval::benefit_deciles(match_controlled$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_controlled_both <- cateval::benefit_deciles(match_controlled$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_controlled_conc <- cateval::benefit_by_group(match_controlled$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_controlled_disc <- cateval::benefit_by_group(match_controlled$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_controlled_both <- cateval::benefit_by_group(match_controlled$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 overall_controlled     <- cateval::benefit_overall(match_controlled$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_controlled <- cateval::benefit_calibration(match_controlled$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_controlled <- cateval::benefit_citl_slope(match_controlled$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 plot_controlled_conc <- plot_calibration(deciles_controlled_conc, title = "Concordant matched to discordant")
 plot_controlled_disc <- plot_calibration(deciles_controlled_disc, title = "Discordant matched to concordant")
@@ -760,12 +759,12 @@ match_intercept <- cateval::match_benefit_pairs(
   seed = 19840503
 )
 
-deciles_intercept_conc <- cateval::benefit_deciles(match_intercept$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_disc <- cateval::benefit_deciles(match_intercept$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_both <- cateval::benefit_deciles(match_intercept$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_conc <- cateval::benefit_by_group(match_intercept$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_disc <- cateval::benefit_by_group(match_intercept$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_both <- cateval::benefit_by_group(match_intercept$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 overall_intercept     <- cateval::benefit_overall(match_intercept$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_intercept <- cateval::benefit_calibration(match_intercept$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_intercept <- cateval::benefit_citl_slope(match_intercept$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 plot_intercept_conc <- plot_calibration(deciles_intercept_conc, title = "Concordant matched to discordant")
 plot_intercept_disc <- plot_calibration(deciles_intercept_disc, title = "Discordant matched to concordant")
@@ -791,12 +790,12 @@ match_intercept_slope <- cateval::match_benefit_pairs(
   seed = 19840503
 )
 
-deciles_intercept_slope_conc <- cateval::benefit_deciles(match_intercept_slope$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_slope_disc <- cateval::benefit_deciles(match_intercept_slope$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_slope_both <- cateval::benefit_deciles(match_intercept_slope$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_slope_conc <- cateval::benefit_by_group(match_intercept_slope$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_slope_disc <- cateval::benefit_by_group(match_intercept_slope$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_intercept_slope_both <- cateval::benefit_by_group(match_intercept_slope$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 overall_intercept_slope     <- cateval::benefit_overall(match_intercept_slope$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_intercept_slope <- cateval::benefit_calibration(match_intercept_slope$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_intercept_slope <- cateval::benefit_citl_slope(match_intercept_slope$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
 plot_intercept_slope_conc <- plot_calibration(deciles_intercept_slope_conc, title = "Concordant matched to discordant")
 plot_intercept_slope_disc <- plot_calibration(deciles_intercept_slope_disc, title = "Discordant matched to concordant")
@@ -1327,12 +1326,12 @@ ggsave(paste0(output_path, "/stage_A_new_population_testing_pred_obs.pdf"),
        plot_pred_obs_original, width = 10, height = 8)
 
 # balance (love) plots for the two matching directions (one file each)
-ggsave(paste0(output_path, "/stage_A_new_population_testing_loveplot_concordant.pdf"),
-       cobalt::love.plot(match_original$matchit$concordant, title = "Concordant as treated"),
-       width = 8, height = 7)
-ggsave(paste0(output_path, "/stage_A_new_population_testing_loveplot_discordant.pdf"),
-       cobalt::love.plot(match_original$matchit$discordant, title = "Discordant as treated"),
-       width = 8, height = 7)
+pdf(paste0(output_path, "/stage_A_new_population_testing_loveplot_concordant.pdf"), width = 8, height = 7)
+plot(summary(match_original$matchit$concordant), main = "Concordant as treated")
+dev.off()
+pdf(paste0(output_path, "/stage_A_new_population_testing_loveplot_discordant.pdf"), width = 8, height = 7)
+plot(summary(match_original$matchit$discordant), main = "Discordant as treated")
+dev.off()
 
 
 ## STAGE B: Differences in Treatment Allocation ----
@@ -1349,12 +1348,12 @@ ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_pred_obs.pdf"),
        plot_pred_obs_original, width = 10, height = 8)
 
 # balance (love) plots for the controlled matching (one file each)
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_concordant.pdf"),
-       cobalt::love.plot(match_controlled$matchit$concordant, title = "Concordant as treated"),
-       width = 8, height = 7)
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_discordant.pdf"),
-       cobalt::love.plot(match_controlled$matchit$discordant, title = "Discordant as treated"),
-       width = 8, height = 7)
+pdf(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_concordant.pdf"), width = 8, height = 7)
+plot(summary(match_controlled$matchit$concordant), main = "Concordant as treated")
+dev.off()
+pdf(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_discordant.pdf"), width = 8, height = 7)
+plot(summary(match_controlled$matchit$discordant), main = "Discordant as treated")
+dev.off()
 
 
 ## STAGE C: Adjust Baseline Risk Differences ----
