@@ -10,8 +10,8 @@
 #    c) Imputing missing data if needed
 # 2) Obtain model predictions for each drug class
 #    a) Generate original predictions
-#    b) Generate intercept recalibrated predictions
-#    c) Generate intercept + slope recalibrated predictions
+#    b) Generate recalibration-in-the-large
+#    c) Generate recalibration
 # 3) Perform calibration and clinical-decision analyses:
 #    a) Pairwise drug calibration
 #    b) Overall benefit calibration
@@ -203,7 +203,7 @@ data_for_imputation <- analysis_dataset[, vars_to_impute]
 missing_indicator <- is.na(data_for_imputation)
 
 # Perform multiple imputation (m=20 imputed datasets)
-mice_m = 20; mice_maxit = 50
+mice_m = 20; mice_maxit = 20
 imputed_data <- mice(data_for_imputation, m = mice_m, method = 'pmm', maxit = mice_maxit, seed = 500, printFlag = TRUE)
 
 # Extract all imputed datasets and calculate mean of imputed values
@@ -316,28 +316,28 @@ predict_for_drug <- function(fit, drug) {
   as.numeric(predict(fit, newdata = nd))
 }
 
-#### Intercept recalibration (drug-specific intercept, shared prognostic effect)
-formula_intercept <- as.formula(
+#### Recalibration-in-the-large (drug-specific intercept, shared prognostic effect)
+formula_recal_large <- as.formula(
   paste0(outcome_var, " ~ 0 + drugclass", prognostic_terms, " + offset(pred_assigned)")
 )
-fit_intercept <- lm(formula_intercept, data = recal_data)
+fit_recal_large <- lm(formula_recal_large, data = recal_data)
 for (drug in drugs) {
-  analysis_dataset[[paste0("pred.int.", drug)]] <- predict_for_drug(fit_intercept, drug)
+  analysis_dataset[[paste0("pred.recal_large.", drug)]] <- predict_for_drug(fit_recal_large, drug)
 }
-recalib_intercept_params <- summarize_lm(fit_intercept, "intercept")
+recalib_recal_large_params <- summarize_lm(fit_recal_large, "recal_large")
 
-#### Intercept + slope recalibration (drug-specific intercept & slope, shared prognostic effect)
-formula_intercept_slope <- as.formula(
+#### Recalibration (drug-specific intercept & slope, shared prognostic effect)
+formula_recal <- as.formula(
   paste0(outcome_var, " ~ 0 + drugclass + drugclass:pred_assigned", prognostic_terms)
 )
-fit_intercept_slope <- lm(formula_intercept_slope, data = recal_data)
+fit_recal <- lm(formula_recal, data = recal_data)
 for (drug in drugs) {
-  analysis_dataset[[paste0("pred.int_slope.", drug)]] <- predict_for_drug(fit_intercept_slope, drug)
+  analysis_dataset[[paste0("pred.recal.", drug)]] <- predict_for_drug(fit_recal, drug)
 }
-recalib_intercept_slope_params <- summarize_lm(fit_intercept_slope, "intercept_slope")
+recalib_recal_params <- summarize_lm(fit_recal, "recal")
 
 # Combine and save recalibration parameters
-recalib_params_full <- bind_rows(recalib_intercept_params, recalib_intercept_slope_params)
+recalib_params_full <- bind_rows(recalib_recal_large_params, recalib_recal_params)
 
 write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.csv"))
 
@@ -377,8 +377,8 @@ pairwise_results_original <- cateval::pairwise_calibration(
   drugs = drugs,
   prediction_vars = paste0("pred.", drugs),
   outcome_var = outcome_var,
-  cal_groups = cal_groups,  
-  adjustment_var = adjustment_vars
+  cal_groups = cal_groups,
+  adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
 plot_pairwise_original <- pairwise_results_original %>%
@@ -419,67 +419,18 @@ plot_pairwise_original <- pairwise_results_original %>%
   )
 
 
-### Prognostic factor adjustment with original predictions
-pairwise_results_original_adj <- cateval::pairwise_calibration(
+### Recalibration-in-the-large predictions
+pairwise_results_recal_large <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
-  prediction_vars = paste0("pred.", drugs),
-  outcome_var = outcome_var,
-  cal_groups = cal_groups,
-  adjustment_var = unique(c(adjustment_vars, prognostic_vars))
-)
-
-plot_pairwise_original_adj <- pairwise_results_original_adj %>%
-  mutate(drugcombo = paste(drug1, drug2)) %>%
-  group_by(drugcombo, n_groups) %>%
-  mutate(min_val = min(n_drug1, n_drug2)) %>%
-  ungroup(n_groups) %>%
-  mutate(
-    select_grouping = ifelse(min_val > 100, n_groups, NA),
-    select_grouping = max(select_grouping, na.rm = TRUE),
-    select_grouping = ifelse(is.infinite(abs(select_grouping)), min(cal_groups), select_grouping)
-  ) %>%
-  ungroup() %>%
-  filter(select_grouping == n_groups) %>%
-  select(-c(drugcombo, min_val, select_grouping)) %>%
-  mutate(title = paste(drug1, "vs", drug2)) %>%
-  ggplot(aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
-  geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
-  geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
-  geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
-  geom_point(colour = "#800020") +
-  geom_errorbar(colour = "#800020") +
-  facet_wrap(~title, nrow = 2) +
-  # inject the predicted (mean) and observed-CI (coef_low/coef_high) values onto
-  # both axes so x and y share one symmetric range; with coord_fixed this gives a
-  # square panel of identical shape in every plot
-  geom_blank(aes(x = coef_low, y = coef_low)) +
-  geom_blank(aes(x = coef_high, y = coef_high)) +
-  geom_blank(aes(x = mean, y = mean)) +
-  coord_fixed(ratio = 1) +
-  scale_x_continuous(limits = function(x) c(-max(abs(x)), max(abs(x)))) +
-  scale_y_continuous(limits = function(x) c(-max(abs(x)), max(abs(x)))) +
-  theme_classic() +
-  labs(
-    x = "Predicted HbA1c benefit (mmol/mol)",
-    y = "Observed HbA1c benefit (mmol/mol)",
-    title = "Pairwise Drug Calibration (original predictions with prognostic factor adjustment)"
-  )
-
-
-### Intercept recalibrated predictions
-pairwise_results_intercept <- cateval::pairwise_calibration(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  drugs = drugs,
-  prediction_vars = paste0("pred.int.", drugs),
+  prediction_vars = paste0("pred.recal_large.", drugs),
   outcome_var = outcome_var,
   cal_groups = cal_groups,  # Number of groups to stratify predictions into
   adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
-plot_pairwise_intercept <- pairwise_results_intercept %>%
+plot_pairwise_recal_large <- pairwise_results_recal_large %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -513,22 +464,22 @@ plot_pairwise_intercept <- pairwise_results_intercept %>%
   labs(
     x = "Predicted HbA1c benefit (mmol/mol)",
     y = "Observed HbA1c benefit (mmol/mol)",
-    title = "Pairwise Drug Calibration (intercept recalibrated predictions)"
+    title = "Pairwise Drug Calibration (recalibration-in-the-large)"
   )
 
 
-### Intercept + slope recalibrated predictions
-pairwise_results_intercept_slope <- cateval::pairwise_calibration(
+### Recalibration predictions
+pairwise_results_recal <- cateval::pairwise_calibration(
   data = analysis_dataset,
   drug_var = "drugclass",
   drugs = drugs,
-  prediction_vars = paste0("pred.int_slope.", drugs),
+  prediction_vars = paste0("pred.recal.", drugs),
   outcome_var = outcome_var,
   cal_groups = cal_groups,  # Number of groups to stratify predictions into
   adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
-plot_pairwise_intercept_slope <- pairwise_results_intercept_slope %>%
+plot_pairwise_recal <- pairwise_results_recal %>%
   mutate(drugcombo = paste(drug1, drug2)) %>%
   group_by(drugcombo, n_groups) %>%
   mutate(min_val = min(n_drug1, n_drug2)) %>%
@@ -562,7 +513,7 @@ plot_pairwise_intercept_slope <- pairwise_results_intercept_slope %>%
   labs(
     x = "Predicted HbA1c benefit (mmol/mol)",
     y = "Observed HbA1c benefit (mmol/mol)",
-    title = "Pairwise Drug Calibration (intercept + slope recalibrated predictions)"
+    title = "Pairwise Drug Calibration (recalibration)"
   )
 
 
@@ -591,9 +542,10 @@ matching_vars <- c(
   "preegfr", "pretotalcholesterol", "prehdl",
   "sex", "smoke", "ncurrtx", "drugline"
 )
-# The same covariates plus any prognostic factors in prognostic_vars.
-# Used for the "controlled" and recalibrated overall-benefit versions below;
-# equal to matching_vars until you populate prognostic_vars.
+# The same covariates plus any prognostic factors in prognostic_vars. Used for
+# matching in every overall-benefit step (the prognostic factor is a cross-cutting
+# control, not a step of its own); equal to matching_vars until you populate
+# prognostic_vars.
 matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
 
 # Confidence intervals: FALSE uses fast analytical intervals; set to TRUE for
@@ -685,7 +637,7 @@ match_original <- cateval::match_benefit_pairs(
   drug_var = "drugclass",
   outcome_var = outcome_var,
   pred_cols = paste0("pred.", drugs),
-  matching_var = matching_vars,
+  matching_var = matching_vars_prog,
   caliper = c(prehba1c = 0.4),
   seed = 19840503
 )
@@ -714,112 +666,78 @@ by_drug_original <- cateval::benefit_by_drug(match_original$combined, drugs = dr
 plot_overall_original_bydrug <- plot_calibration_by_drug(by_drug_original, title = "Overall Benefit Calibration by drug class (original predictions)")
 
 
-### Controlled for prognostic factor (original predictions, matched on the prognostic factor) ----
+### Recalibration-in-the-large predictions ----
 
-# Same matched analysis as the original above, but also matching on prognostic_vars
-# (via matching_vars_prog). When prognostic_vars is empty this equals the original.
-match_controlled <- cateval::match_benefit_pairs(
+match_recal_large <- cateval::match_benefit_pairs(
   data = analysis_dataset,
   drug_var = "drugclass",
   outcome_var = outcome_var,
-  pred_cols = paste0("pred.", drugs),
+  pred_cols = paste0("pred.recal_large.", drugs),
   matching_var = matching_vars_prog,
   caliper = c(prehba1c = 0.4),
   seed = 19840503
 )
 
-deciles_controlled_conc <- cateval::benefit_by_group(match_controlled$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_controlled_disc <- cateval::benefit_by_group(match_controlled$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_controlled_both <- cateval::benefit_by_group(match_controlled$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_large_conc <- cateval::benefit_by_group(match_recal_large$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_large_disc <- cateval::benefit_by_group(match_recal_large$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_large_both <- cateval::benefit_by_group(match_recal_large$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
-overall_controlled     <- cateval::benefit_overall(match_controlled$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_controlled <- cateval::benefit_citl_slope(match_controlled$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+overall_recal_large     <- cateval::benefit_overall(match_recal_large$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_recal_large <- cateval::benefit_citl_slope(match_recal_large$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
-plot_controlled_conc <- plot_calibration(deciles_controlled_conc, title = "Concordant matched to discordant")
-plot_controlled_disc <- plot_calibration(deciles_controlled_disc, title = "Discordant matched to concordant")
-plot_controlled_both <- plot_calibration(deciles_controlled_both, title = "Combined")
+plot_recal_large_conc <- plot_calibration(deciles_recal_large_conc, title = "Concordant matched to discordant")
+plot_recal_large_disc <- plot_calibration(deciles_recal_large_disc, title = "Discordant matched to concordant")
+plot_recal_large_both <- plot_calibration(deciles_recal_large_both, title = "Combined")
 
-plot_overall_controlled <- plot_controlled_conc + plot_controlled_disc + plot_controlled_both +
+plot_overall_recal_large <- plot_recal_large_conc + plot_recal_large_disc + plot_recal_large_both +
   patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (controlled for prognostic factor)")
+  patchwork::plot_annotation(title = "Overall Benefit Calibration (recalibration-in-the-large)")
 
-by_drug_controlled <- cateval::benefit_by_drug(match_controlled$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_controlled_bydrug <- plot_calibration_by_drug(by_drug_controlled, title = "Overall Benefit Calibration by drug class (controlled for prognostic factor)")
+by_drug_recal_large <- cateval::benefit_by_drug(match_recal_large$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+plot_overall_recal_large_bydrug <- plot_calibration_by_drug(by_drug_recal_large, title = "Overall Benefit Calibration by drug class (recalibration-in-the-large)")
 
 
-### Intercept recalibrated predictions ----
+### Recalibration predictions ----
 
-match_intercept <- cateval::match_benefit_pairs(
+match_recal <- cateval::match_benefit_pairs(
   data = analysis_dataset,
   drug_var = "drugclass",
   outcome_var = outcome_var,
-  pred_cols = paste0("pred.int.", drugs),
+  pred_cols = paste0("pred.recal.", drugs),
   matching_var = matching_vars_prog,
   caliper = c(prehba1c = 0.4),
   seed = 19840503
 )
 
-deciles_intercept_conc <- cateval::benefit_by_group(match_intercept$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_disc <- cateval::benefit_by_group(match_intercept$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_both <- cateval::benefit_by_group(match_intercept$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_conc <- cateval::benefit_by_group(match_recal$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_disc <- cateval::benefit_by_group(match_recal$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+deciles_recal_both <- cateval::benefit_by_group(match_recal$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
-overall_intercept     <- cateval::benefit_overall(match_intercept$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_intercept <- cateval::benefit_citl_slope(match_intercept$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+overall_recal     <- cateval::benefit_overall(match_recal$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+calibration_recal <- cateval::benefit_citl_slope(match_recal$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
-plot_intercept_conc <- plot_calibration(deciles_intercept_conc, title = "Concordant matched to discordant")
-plot_intercept_disc <- plot_calibration(deciles_intercept_disc, title = "Discordant matched to concordant")
-plot_intercept_both <- plot_calibration(deciles_intercept_both, title = "Combined")
+plot_recal_conc <- plot_calibration(deciles_recal_conc, title = "Concordant matched to discordant")
+plot_recal_disc <- plot_calibration(deciles_recal_disc, title = "Discordant matched to concordant")
+plot_recal_both <- plot_calibration(deciles_recal_both, title = "Combined")
 
-plot_overall_intercept <- plot_intercept_conc + plot_intercept_disc + plot_intercept_both +
+plot_overall_recal <- plot_recal_conc + plot_recal_disc + plot_recal_both +
   patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (intercept recalibrated predictions)")
+  patchwork::plot_annotation(title = "Overall Benefit Calibration (recalibration)")
 
-by_drug_intercept <- cateval::benefit_by_drug(match_intercept$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_intercept_bydrug <- plot_calibration_by_drug(by_drug_intercept, title = "Overall Benefit Calibration by drug class (intercept recalibrated predictions)")
-
-
-### Intercept + slope recalibrated predictions ----
-
-match_intercept_slope <- cateval::match_benefit_pairs(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  outcome_var = outcome_var,
-  pred_cols = paste0("pred.int_slope.", drugs),
-  matching_var = matching_vars_prog,
-  caliper = c(prehba1c = 0.4),
-  seed = 19840503
-)
-
-deciles_intercept_slope_conc <- cateval::benefit_by_group(match_intercept_slope$concordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_slope_disc <- cateval::benefit_by_group(match_intercept_slope$discordant, cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_intercept_slope_both <- cateval::benefit_by_group(match_intercept_slope$combined,   cal_groups = 10, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-overall_intercept_slope     <- cateval::benefit_overall(match_intercept_slope$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_intercept_slope <- cateval::benefit_citl_slope(match_intercept_slope$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-plot_intercept_slope_conc <- plot_calibration(deciles_intercept_slope_conc, title = "Concordant matched to discordant")
-plot_intercept_slope_disc <- plot_calibration(deciles_intercept_slope_disc, title = "Discordant matched to concordant")
-plot_intercept_slope_both <- plot_calibration(deciles_intercept_slope_both, title = "Combined")
-
-plot_overall_intercept_slope <- plot_intercept_slope_conc + plot_intercept_slope_disc + plot_intercept_slope_both +
-  patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (intercept + slope recalibrated predictions)")
-
-by_drug_intercept_slope <- cateval::benefit_by_drug(match_intercept_slope$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_intercept_slope_bydrug <- plot_calibration_by_drug(by_drug_intercept_slope, title = "Overall Benefit Calibration by drug class (intercept + slope recalibrated predictions)")
+by_drug_recal <- cateval::benefit_by_drug(match_recal$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+plot_overall_recal_bydrug <- plot_calibration_by_drug(by_drug_recal, title = "Overall Benefit Calibration by drug class (recalibration)")
 
 
 ### Compare the overall benefit estimate across model versions ----
 
 benefit_estimates <- bind_rows(
   overall_original %>% mutate(model = "Original"),
-  overall_controlled %>% mutate(model = "Controlled for prognostic factor"),
-  overall_intercept %>% mutate(model = "Intercept recalibrated"),
-  overall_intercept_slope %>% mutate(model = "Intercept + slope recalibrated")
+  overall_recal_large %>% mutate(model = "Recalibration-in-the-large"),
+  overall_recal %>% mutate(model = "Recalibration")
 ) %>%
   mutate(model = factor(
     model,
-    levels = c("Original", "Controlled for prognostic factor", "Intercept recalibrated", "Intercept + slope recalibrated")
+    levels = c("Original", "Recalibration-in-the-large", "Recalibration")
   ))
 
 plot_benefit_estimates <- benefit_estimates %>%
@@ -868,15 +786,15 @@ plot_pred_obs_original <- analysis_dataset %>%
     subtitle = paste0("n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
   )
 
-### Intercept recalibrated predictions
-plot_pred_obs_intercept <- analysis_dataset %>%
+### Recalibration-in-the-large predictions
+plot_pred_obs_recal_large <- analysis_dataset %>%
   mutate(
     pred_drug = case_when(
-      drugclass == "SGLT2" ~ pred.int.SGLT2,
-      drugclass == "GLP1"  ~ pred.int.GLP1,
-      drugclass == "DPP4"  ~ pred.int.DPP4,
-      drugclass == "SU"    ~ pred.int.SU,
-      drugclass == "TZD"   ~ pred.int.TZD,
+      drugclass == "SGLT2" ~ pred.recal_large.SGLT2,
+      drugclass == "GLP1"  ~ pred.recal_large.GLP1,
+      drugclass == "DPP4"  ~ pred.recal_large.DPP4,
+      drugclass == "SU"    ~ pred.recal_large.SU,
+      drugclass == "TZD"   ~ pred.recal_large.TZD,
       TRUE ~ NA_real_
     )
   ) %>%
@@ -889,19 +807,19 @@ plot_pred_obs_intercept <- analysis_dataset %>%
   labs(
     x = "Predicted 12-month HbA1c (mmol/mol)",
     y = "Observed 12-month HbA1c (mmol/mol)",
-    title = "Predicted vs Observed (intercept recalibrated predictions)",
+    title = "Predicted vs Observed (recalibration-in-the-large)",
     subtitle = paste0("n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
   )
 
-### Intercept + slope recalibrated predictions
-plot_pred_obs_intercept_slope <- analysis_dataset %>%
+### Recalibration predictions
+plot_pred_obs_recal <- analysis_dataset %>%
   mutate(
     pred_drug = case_when(
-      drugclass == "SGLT2" ~ pred.int_slope.SGLT2,
-      drugclass == "GLP1"  ~ pred.int_slope.GLP1,
-      drugclass == "DPP4"  ~ pred.int_slope.DPP4,
-      drugclass == "SU"    ~ pred.int_slope.SU,
-      drugclass == "TZD"   ~ pred.int_slope.TZD,
+      drugclass == "SGLT2" ~ pred.recal.SGLT2,
+      drugclass == "GLP1"  ~ pred.recal.GLP1,
+      drugclass == "DPP4"  ~ pred.recal.DPP4,
+      drugclass == "SU"    ~ pred.recal.SU,
+      drugclass == "TZD"   ~ pred.recal.TZD,
       TRUE ~ NA_real_
     )
   ) %>%
@@ -914,7 +832,7 @@ plot_pred_obs_intercept_slope <- analysis_dataset %>%
   labs(
     x = "Predicted 12-month HbA1c (mmol/mol)",
     y = "Observed 12-month HbA1c (mmol/mol)",
-    title = "Predicted vs Observed (intercept + slope recalibrated predictions)",
+    title = "Predicted vs Observed (recalibration)",
     subtitle = paste0("n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
   )
 
@@ -1009,43 +927,43 @@ plot_rank1_original <- rank1_original_breakdown %>%
   )
 
 
-# Intercept recalibrated predictions
-tolerance3_intercept <- analysis_dataset %>%
+# Recalibration-in-the-large predictions
+tolerance3_recal_large <- analysis_dataset %>%
   cateval::get_best_drugs(
     tolerance = 3,
-    column_names = paste0("pred.int.", drugs),
-    final_var_name = "pred.int."
+    column_names = paste0("pred.recal_large.", drugs),
+    final_var_name = "pred.recal_large."
   ) %>%
   select(matches("within_3"))
 
-rank1_intercept <- analysis_dataset %>%
+rank1_recal_large <- analysis_dataset %>%
   cateval::get_best_drugs(
     rank = 1,
-    column_names = paste0("pred.int.", drugs),
-    final_var_name = "pred.int."
+    column_names = paste0("pred.recal_large.", drugs),
+    final_var_name = "pred.recal_large."
   ) %>%
   select(matches("rank1"))
 
-rank2_intercept <- analysis_dataset %>%
+rank2_recal_large <- analysis_dataset %>%
   cateval::get_best_drugs(
     rank = 2,
-    column_names = paste0("pred.int.", drugs),
-    final_var_name = "pred.int."
+    column_names = paste0("pred.recal_large.", drugs),
+    final_var_name = "pred.recal_large."
   ) %>%
   select(matches("rank2"))
 
-rank1_rank2_intercept <- cbind(rank1_intercept, rank2_intercept)
+rank1_rank2_recal_large <- cbind(rank1_recal_large, rank2_recal_large)
 
-rank1_rank2_intercept_filtered <- analysis_dataset %>%
-  cbind(rank1_rank2_intercept) %>%
+rank1_rank2_recal_large_filtered <- analysis_dataset %>%
+  cbind(rank1_rank2_recal_large) %>%
   mutate(
-    rank1_benefit = pred.int.rank1_drug_value,
-    rank2_benefit = pred.int.rank2_drug_value,
+    rank1_benefit = pred.recal_large.rank1_drug_value,
+    rank2_benefit = pred.recal_large.rank2_drug_value,
     benefit_difference = rank2_benefit - rank1_benefit
   )
 
-rank1_intercept_breakdown <- rank1_rank2_intercept_filtered %>%
-  mutate(drug = pred.int.rank1_drug_name) %>%
+rank1_recal_large_breakdown <- rank1_rank2_recal_large_filtered %>%
+  mutate(drug = pred.recal_large.rank1_drug_name) %>%
   group_by(drug) %>%
   summarise(n = n(), .groups = "drop") %>%
   mutate(
@@ -1054,7 +972,7 @@ rank1_intercept_breakdown <- rank1_rank2_intercept_filtered %>%
   ) %>%
   arrange(desc(n))
 
-plot_rank1_intercept <- rank1_intercept_breakdown %>%
+plot_rank1_recal_large <- rank1_recal_large_breakdown %>%
   mutate(drug = factor(drug, levels = c("SGLT2", "GLP1", "DPP4", "SU", "TZD"))) %>%
   ggplot(aes(x = reorder(drug, -n), y = proportion, fill = drug)) +
   geom_col(color = "black", size = 0.3) +
@@ -1067,7 +985,7 @@ plot_rank1_intercept <- rank1_intercept_breakdown %>%
   ) +
   scale_x_discrete(labels = c("SGLT2" = "SGLT2i", "GLP1" = "GLP-1RA", "DPP4" = "DPP4i", 
                               "SU" = "SU", "TZD" = "TZD")) +
-  scale_y_continuous(limits = c(0, max(rank1_intercept_breakdown$proportion) * 1.15)) +
+  scale_y_continuous(limits = c(0, max(rank1_recal_large_breakdown$proportion) * 1.15)) +
   theme_minimal() +
   theme(
     axis.title = element_text(size = 12, face = "bold"),
@@ -1077,16 +995,16 @@ plot_rank1_intercept <- rank1_intercept_breakdown %>%
   labs(
     x = "Drug Class",
     y = "Proportion of Cohort (%)",
-    title = "Optimal Drug Distribution - Rank 1 (Intercept Recalibrated)",
+    title = "Optimal Drug Distribution - Rank 1 (Recalibration-in-the-large)",
     subtitle = "Full cohort"
   )
 
 ## comparing tolerance3 combinations original vs intercept (drugs added and removed)
-compare_tolerance3_orig_intercept <- tolerance3_original %>%
+compare_tolerance3_orig_recal_large <- tolerance3_original %>%
   select(original = pred.within_3_of_best_drug_name) %>%
   cbind(
-    tolerance3_intercept %>%
-      select(intercept = pred.int.within_3_of_best_drug_name)
+    tolerance3_recal_large %>%
+      select(intercept = pred.recal_large.within_3_of_best_drug_name)
   ) %>%
   mutate(
     original_list  = map(original, ~ str_split(ifelse(is.na(.x), "", .x), ",")[[1]] %>% str_trim()),
@@ -1106,7 +1024,7 @@ compare_tolerance3_orig_intercept <- tolerance3_original %>%
     percent = 100 * n / nrow(analysis_dataset)
   )
 
-plot_tolerance3_added_removed_orig_intercept <- compare_tolerance3_orig_intercept %>%
+plot_tolerance3_added_removed_orig_recal_large <- compare_tolerance3_orig_recal_large %>%
   complete(change_type = c("added", "removed"), drugs = drugs, fill = list(n = 0, percent = 0)) %>%
   mutate(
     drugs = factor(drugs, levels = unique(drugs)),
@@ -1145,49 +1063,49 @@ plot_tolerance3_added_removed_orig_intercept <- compare_tolerance3_orig_intercep
   ) +
   labs(
     x = "Drug Class",
-    title = "Tolerance-3 drug changes: Original vs Intercept recalibrated",
+    title = "Tolerance-3 drug changes: Original vs Recalibration-in-the-large",
     alpha = "Change"
   )
 
 
 
-# Intercept + slope recalibrated predictions
-tolerance3_intercept_slope <- analysis_dataset %>%
+# Recalibration predictions
+tolerance3_recal <- analysis_dataset %>%
   cateval::get_best_drugs(
     tolerance = 3,
-    column_names = paste0("pred.int_slope.", drugs),
-    final_var_name = "pred.int_slope."
+    column_names = paste0("pred.recal.", drugs),
+    final_var_name = "pred.recal."
   ) %>%
   select(matches("within_3"))
 
-rank1_intercept_slope <- analysis_dataset %>%
+rank1_recal <- analysis_dataset %>%
   cateval::get_best_drugs(
     rank = 1,
-    column_names = paste0("pred.int_slope.", drugs),
-    final_var_name = "pred.int_slope."
+    column_names = paste0("pred.recal.", drugs),
+    final_var_name = "pred.recal."
   ) %>%
   select(matches("rank1"))
 
-rank2_intercept_slope <- analysis_dataset %>%
+rank2_recal <- analysis_dataset %>%
   cateval::get_best_drugs(
     rank = 2,
-    column_names = paste0("pred.int_slope.", drugs),
-    final_var_name = "pred.int_slope."
+    column_names = paste0("pred.recal.", drugs),
+    final_var_name = "pred.recal."
   ) %>%
   select(matches("rank2"))
 
-rank1_rank2_intercept_slope <- cbind(rank1_intercept_slope, rank2_intercept_slope)
+rank1_rank2_recal <- cbind(rank1_recal, rank2_recal)
 
-rank1_rank2_intercept_slope_filtered <- analysis_dataset %>%
-  cbind(rank1_rank2_intercept_slope) %>%
+rank1_rank2_recal_filtered <- analysis_dataset %>%
+  cbind(rank1_rank2_recal) %>%
   mutate(
-    rank1_benefit = pred.int_slope.rank1_drug_value,
-    rank2_benefit = pred.int_slope.rank2_drug_value,
+    rank1_benefit = pred.recal.rank1_drug_value,
+    rank2_benefit = pred.recal.rank2_drug_value,
     benefit_difference = rank2_benefit - rank1_benefit
   )
 
-rank1_intercept_slope_breakdown <- rank1_rank2_intercept_slope_filtered %>%
-  mutate(drug = pred.int_slope.rank1_drug_name) %>%
+rank1_recal_breakdown <- rank1_rank2_recal_filtered %>%
+  mutate(drug = pred.recal.rank1_drug_name) %>%
   group_by(drug) %>%
   summarise(n = n(), .groups = "drop") %>%
   mutate(
@@ -1196,7 +1114,7 @@ rank1_intercept_slope_breakdown <- rank1_rank2_intercept_slope_filtered %>%
   ) %>%
   arrange(desc(n))
 
-plot_rank1_intercept_slope <- rank1_intercept_slope_breakdown %>%
+plot_rank1_recal <- rank1_recal_breakdown %>%
   mutate(drug = factor(drug, levels = c("SGLT2", "GLP1", "DPP4", "SU", "TZD"))) %>%
   ggplot(aes(x = reorder(drug, -n), y = proportion, fill = drug)) +
   geom_col(color = "black", size = 0.3) +
@@ -1209,7 +1127,7 @@ plot_rank1_intercept_slope <- rank1_intercept_slope_breakdown %>%
   ) +
   scale_x_discrete(labels = c("SGLT2" = "SGLT2i", "GLP1" = "GLP-1RA", "DPP4" = "DPP4i", 
                               "SU" = "SU", "TZD" = "TZD")) +
-  scale_y_continuous(limits = c(0, max(rank1_intercept_slope_breakdown$proportion) * 1.15)) +
+  scale_y_continuous(limits = c(0, max(rank1_recal_breakdown$proportion) * 1.15)) +
   theme_minimal() +
   theme(
     axis.title = element_text(size = 12, face = "bold"),
@@ -1219,23 +1137,23 @@ plot_rank1_intercept_slope <- rank1_intercept_slope_breakdown %>%
   labs(
     x = "Drug Class",
     y = "Proportion of Cohort (%)",
-    title = "Optimal Drug Distribution - Rank 1 (Intercept + Slope Recalibrated)",
+    title = "Optimal Drug Distribution - Rank 1 (Recalibration)",
     subtitle = "Full cohort"
   )
 
 ## comparing tolerance3 combinations original vs intercept + slope (drugs added and removed)
-compare_tolerance3_orig_intercept_slope <- tolerance3_original %>%
+compare_tolerance3_orig_recal <- tolerance3_original %>%
   select(original = pred.within_3_of_best_drug_name) %>%
   cbind(
-    tolerance3_intercept_slope %>%
-      select(intercept_slope = pred.int_slope.within_3_of_best_drug_name)
+    tolerance3_recal %>%
+      select(recal = pred.recal.within_3_of_best_drug_name)
   ) %>%
   mutate(
     original_list = map(original, ~ str_split(ifelse(is.na(.x), "", .x), ",")[[1]] %>% str_trim()),
-    intercept_slope_list = map(intercept_slope, ~ str_split(ifelse(is.na(.x), "", .x), ",")[[1]] %>% str_trim()),
-    added = map2_chr(intercept_slope_list, original_list,
+    recal_list = map(recal, ~ str_split(ifelse(is.na(.x), "", .x), ",")[[1]] %>% str_trim()),
+    added = map2_chr(recal_list, original_list,
                      ~ paste(setdiff(.x, .y), collapse = ",")),
-    removed = map2_chr(original_list, intercept_slope_list,
+    removed = map2_chr(original_list, recal_list,
                        ~ paste(setdiff(.x, .y), collapse = ","))
   ) %>%
   select(added, removed) %>%
@@ -1248,7 +1166,7 @@ compare_tolerance3_orig_intercept_slope <- tolerance3_original %>%
     percent = 100 * n / nrow(analysis_dataset)
   )
 
-plot_tolerance3_added_removed_orig_intercept_slope <- compare_tolerance3_orig_intercept_slope %>%
+plot_tolerance3_added_removed_orig_recal <- compare_tolerance3_orig_recal %>%
   complete(change_type = c("added", "removed"), drugs = drugs, fill = list(n = 0, percent = 0)) %>%
   mutate(
     drugs = factor(drugs, levels = unique(drugs)),
@@ -1287,97 +1205,77 @@ plot_tolerance3_added_removed_orig_intercept_slope <- compare_tolerance3_orig_in
   ) +
   labs(
     x = "Drug Class",
-    title = "Tolerance-3 drug changes: Original vs Intercept + slope recalibrated",
+    title = "Tolerance-3 drug changes: Original vs Recalibration",
     alpha = "Change"
   )
 
 
 #############################################################################
 
-# Step 4: Save Plots by Validation Stage -----------------------------------
+# Step 4: Save Plots by Validation Step -----------------------------------
 
-## This section saves plots according to the validation procedure flowchart:
+## This section saves plots for the validation procedure, which evaluates the
+## differential (between-drug) treatment effect at three steps:
 ##
-## STAGE A — New population testing
-##   Does the original model work as is?
+## STEP 1 — Original
+##   Does the original model's differential effect calibrate as is?
 ##
-## STAGE B — Differences in treatment allocation
-##   Differences in HTE explained by prognostic factors?
+## STEP 2 — Recalibration-in-the-large
+##   Does a drug-specific intercept correction calibrate the differential effect?
 ##
-## STAGE C — Adjust baseline risk differences
-##   Is the baseline effect different between populations?
+## STEP 3 — Recalibration
+##   Does a drug-specific intercept + slope correction calibrate it?
 ##
-## STAGE D — Adjust baseline and predictor effect
-##   Is the predictor effect different between populations?
+## The prognostic factor (prognostic_vars) is a cross-cutting control applied
+## within every step when identified — adjusted for in the pairwise analysis and
+## matched on in the overall-benefit analysis — not a step of its own.
 
 
-## Save plots to separate PDFs by validation stage ----
+## Save plots to separate PDFs by validation step ----
 
 
-## STAGE A: New Population Testing ----
+## STEP 1: Original ----
 
-ggsave(paste0(output_path, "/stage_A_new_population_testing_pairwise.pdf"),
+ggsave(paste0(output_path, "/step1_original_pairwise.pdf"),
        plot_pairwise_original, width = 12, height = 8)
-ggsave(paste0(output_path, "/stage_A_new_population_testing_overall.pdf"),
+ggsave(paste0(output_path, "/step1_original_overall.pdf"),
        plot_overall_original, width = 18, height = 6)
-ggsave(paste0(output_path, "/stage_A_new_population_testing_overall_by_drug.pdf"),
+ggsave(paste0(output_path, "/step1_original_overall_by_drug.pdf"),
        plot_overall_original_bydrug, width = 15, height = 10)
-ggsave(paste0(output_path, "/stage_A_new_population_testing_pred_obs.pdf"),
+ggsave(paste0(output_path, "/step1_original_pred_obs.pdf"),
        plot_pred_obs_original, width = 10, height = 8)
 
 # balance (love) plots for the two matching directions (one file each)
-pdf(paste0(output_path, "/stage_A_new_population_testing_loveplot_concordant.pdf"), width = 8, height = 7)
+pdf(paste0(output_path, "/step1_original_loveplot_concordant.pdf"), width = 8, height = 7)
 plot(summary(match_original$matchit$concordant), main = "Concordant as treated")
 dev.off()
-pdf(paste0(output_path, "/stage_A_new_population_testing_loveplot_discordant.pdf"), width = 8, height = 7)
+pdf(paste0(output_path, "/step1_original_loveplot_discordant.pdf"), width = 8, height = 7)
 plot(summary(match_original$matchit$discordant), main = "Discordant as treated")
 dev.off()
 
 
-## STAGE B: Differences in Treatment Allocation ----
-# Prognostic factor control: the pairwise analysis adjusts for the prognostic
-# factor and overall benefit matches on it (the "controlled" version).
+## STEP 2: Recalibration-in-the-large ----
 
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_pairwise.pdf"),
-       plot_pairwise_original_adj, width = 12, height = 8)
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_overall.pdf"),
-       plot_overall_controlled, width = 18, height = 6)
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_overall_by_drug.pdf"),
-       plot_overall_controlled_bydrug, width = 15, height = 10)
-ggsave(paste0(output_path, "/stage_B_prognostic_adjustment_pred_obs.pdf"),
-       plot_pred_obs_original, width = 10, height = 8)
-
-# balance (love) plots for the controlled matching (one file each)
-pdf(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_concordant.pdf"), width = 8, height = 7)
-plot(summary(match_controlled$matchit$concordant), main = "Concordant as treated")
-dev.off()
-pdf(paste0(output_path, "/stage_B_prognostic_adjustment_loveplot_discordant.pdf"), width = 8, height = 7)
-plot(summary(match_controlled$matchit$discordant), main = "Discordant as treated")
-dev.off()
+ggsave(paste0(output_path, "/step2_recalibration_in_the_large_pairwise.pdf"),
+       plot_pairwise_recal_large, width = 12, height = 8)
+ggsave(paste0(output_path, "/step2_recalibration_in_the_large_overall.pdf"),
+       plot_overall_recal_large, width = 18, height = 6)
+ggsave(paste0(output_path, "/step2_recalibration_in_the_large_overall_by_drug.pdf"),
+       plot_overall_recal_large_bydrug, width = 15, height = 10)
+ggsave(paste0(output_path, "/step2_recalibration_in_the_large_pred_obs.pdf"),
+       plot_pred_obs_recal_large, width = 10, height = 8)
 
 
-## STAGE C: Adjust Baseline Risk Differences ----
+## STEP 3: Recalibration ----
 
-ggsave(paste0(output_path, "/stage_C_baseline_adjustment_pairwise.pdf"),
-       plot_pairwise_intercept, width = 12, height = 8)
-ggsave(paste0(output_path, "/stage_C_baseline_adjustment_overall.pdf"),
-       plot_overall_intercept, width = 18, height = 6)
-ggsave(paste0(output_path, "/stage_C_baseline_adjustment_overall_by_drug.pdf"),
-       plot_overall_intercept_bydrug, width = 15, height = 10)
-ggsave(paste0(output_path, "/stage_C_baseline_adjustment_pred_obs.pdf"),
-       plot_pred_obs_intercept, width = 10, height = 8)
-
-
-## STAGE D: Adjust Baseline and Predictor Effect ----
-
-ggsave(paste0(output_path, "/stage_D_baseline_predictor_adjustment_pairwise.pdf"),
-       plot_pairwise_intercept_slope, width = 12, height = 8)
-ggsave(paste0(output_path, "/stage_D_baseline_predictor_adjustment_overall.pdf"),
-       plot_overall_intercept_slope, width = 18, height = 6)
-ggsave(paste0(output_path, "/stage_D_baseline_predictor_adjustment_overall_by_drug.pdf"),
-       plot_overall_intercept_slope_bydrug, width = 15, height = 10)
-ggsave(paste0(output_path, "/stage_D_baseline_predictor_adjustment_pred_obs.pdf"),
-       plot_pred_obs_intercept_slope, width = 10, height = 8)
+ggsave(paste0(output_path, "/step3_recalibration_pairwise.pdf"),
+       plot_pairwise_recal, width = 12, height = 8)
+ggsave(paste0(output_path, "/step3_recalibration_overall.pdf"),
+       plot_overall_recal, width = 18, height = 6)
+ggsave(paste0(output_path, "/step3_recalibration_overall_by_drug.pdf"),
+       plot_overall_recal_bydrug, width = 15, height = 10)
+ggsave(paste0(output_path, "/step3_recalibration_pred_obs.pdf"),
+       plot_pred_obs_recal, width = 10, height = 8)
 
 
 ## Additional Analyses: Clinical Decision Analysis ----
@@ -1385,17 +1283,17 @@ ggsave(paste0(output_path, "/stage_D_baseline_predictor_adjustment_pred_obs.pdf"
 ggsave(paste0(output_path, "/clinical_decision_rank1_original_predictions.pdf"), 
        plot_rank1_original, width = 8, height = 5)
 
-ggsave(paste0(output_path, "/clinical_decision_rank1_intercept_recalibrated.pdf"), 
-       plot_rank1_intercept, width = 8, height = 5)
+ggsave(paste0(output_path, "/clinical_decision_rank1_recal_large_recalibrated.pdf"), 
+       plot_rank1_recal_large, width = 8, height = 5)
 
-ggsave(paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_intercept.pdf"),
-       plot_tolerance3_added_removed_orig_intercept, width = 9, height = 6)
+ggsave(paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large.pdf"),
+       plot_tolerance3_added_removed_orig_recal_large, width = 9, height = 6)
 
-ggsave(paste0(output_path, "/clinical_decision_rank1_intercept_slope_recalibrated.pdf"), 
-       plot_rank1_intercept_slope, width = 8, height = 5)
+ggsave(paste0(output_path, "/clinical_decision_rank1_recal_recalibrated.pdf"), 
+       plot_rank1_recal, width = 8, height = 5)
 
-ggsave(paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_intercept_slope.pdf"),
-       plot_tolerance3_added_removed_orig_intercept_slope, width = 9, height = 6)
+ggsave(paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal.pdf"),
+       plot_tolerance3_added_removed_orig_recal, width = 9, height = 6)
 
 ggsave(paste0(output_path, "/overall_benefit_estimates_by_model_version.pdf"),
        plot_benefit_estimates, width = 9, height = 5)
