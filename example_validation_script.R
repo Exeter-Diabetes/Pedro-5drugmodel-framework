@@ -336,8 +336,25 @@ for (drug in drugs) {
 }
 recalib_recal_params <- summarize_lm(fit_recal, "recal")
 
+#### Original predictions adjusted for prognostic factors
+# Computed last, so the recalibrations above use the raw predictions as their base.
+# The model's own prediction is kept (offset, coefficient 1) and only a shared
+# coefficient per prognostic factor is added, shifting every drug equally: this
+# moves the absolute predictions (and the predicted-vs-observed calibration) but
+# leaves every between-drug benefit unchanged. The original pred.<drug> columns are
+# overwritten so the rest of the script uses them directly. With prognostic_vars
+# empty the predictions are returned unchanged.
+formula_original <- as.formula(
+  paste0(outcome_var, " ~ 0", prognostic_terms, " + offset(pred_assigned)")
+)
+fit_original <- lm(formula_original, data = recal_data)
+for (drug in drugs) {
+  analysis_dataset[[paste0(pred_prefix, drug)]] <- predict_for_drug(fit_original, drug)
+}
+recalib_original_params <- summarize_lm(fit_original, "original")
+
 # Combine and save recalibration parameters
-recalib_params_full <- bind_rows(recalib_recal_large_params, recalib_recal_params)
+recalib_params_full <- bind_rows(recalib_original_params, recalib_recal_large_params, recalib_recal_params)
 
 write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.csv"))
 
