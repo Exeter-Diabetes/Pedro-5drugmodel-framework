@@ -284,12 +284,25 @@ summarize_lm <- function(fit, model_type) {
   rownames(ci_mat) <- NULL
   names(ci_mat) <- c("ci_low", "ci_high", "term")
 
+  # n per coefficient: for a drug-specific term (drugclass<DRUG>, or its slope
+  # interaction) use the number of patients on that drug; for any shared term
+  # (e.g. a prognostic factor) use the total number fitted.
+  mf <- model.frame(fit)
+  drug_counts <- if ("drugclass" %in% names(mf)) table(mf$drugclass) else integer(0)
+  term_drug <- ifelse(
+    startsWith(coef_mat$term, "drugclass"),
+    sub(":.*$", "", sub("^drugclass", "", coef_mat$term)),
+    NA_character_
+  )
+  coef_mat$n <- ifelse(
+    !is.na(term_drug) & term_drug %in% names(drug_counts),
+    as.integer(drug_counts[term_drug]),
+    nobs(fit)
+  )
+
   coef_mat %>%
     left_join(ci_mat, by = "term") %>%
-    mutate(
-      recalibration = model_type,
-      n = nobs(fit)
-    ) %>%
+    mutate(recalibration = model_type) %>%
     select(recalibration, term, estimate, std_error, ci_low, ci_high, n)
 }
 
@@ -1282,6 +1295,14 @@ ggsave(paste0(output_path, "/step2_recalibration_in_the_large_overall_by_drug.pd
 ggsave(paste0(output_path, "/step2_recalibration_in_the_large_pred_obs.pdf"),
        plot_pred_obs_recal_large, width = 10, height = 8)
 
+# balance (love) plots for the two matching directions (one file each)
+pdf(paste0(output_path, "/step2_recalibration_in_the_large_loveplot_concordant.pdf"), width = 8, height = 7)
+plot(summary(match_recal_large$matchit$concordant), main = "Concordant as treated")
+dev.off()
+pdf(paste0(output_path, "/step2_recalibration_in_the_large_loveplot_discordant.pdf"), width = 8, height = 7)
+plot(summary(match_recal_large$matchit$discordant), main = "Discordant as treated")
+dev.off()
+
 
 ## STEP 3: Recalibration ----
 
@@ -1293,6 +1314,14 @@ ggsave(paste0(output_path, "/step3_recalibration_overall_by_drug.pdf"),
        plot_overall_recal_bydrug, width = 15, height = 10)
 ggsave(paste0(output_path, "/step3_recalibration_pred_obs.pdf"),
        plot_pred_obs_recal, width = 10, height = 8)
+
+# balance (love) plots for the two matching directions (one file each)
+pdf(paste0(output_path, "/step3_recalibration_loveplot_concordant.pdf"), width = 8, height = 7)
+plot(summary(match_recal$matchit$concordant), main = "Concordant as treated")
+dev.off()
+pdf(paste0(output_path, "/step3_recalibration_loveplot_discordant.pdf"), width = 8, height = 7)
+plot(summary(match_recal$matchit$discordant), main = "Discordant as treated")
+dev.off()
 
 
 ## Additional Analyses: Clinical Decision Analysis ----
@@ -1314,5 +1343,13 @@ ggsave(paste0(output_path, "/clinical_decision_tolerance3_added_removed_original
 
 ggsave(paste0(output_path, "/overall_benefit_estimates_by_model_version.pdf"),
        plot_benefit_estimates, width = 9, height = 5)
+
+# table of the average overall benefit per step (estimate and 95% CI)
+write.csv(
+  benefit_estimates %>%
+    select(model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
+  paste0(output_path, "/overall_benefit_estimates_by_model_version.csv"),
+  row.names = FALSE
+)
 
 
