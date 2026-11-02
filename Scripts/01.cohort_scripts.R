@@ -27,7 +27,9 @@ analysis_ethnicity <- t2d_1stinstance %>%
   ## Exclusions based on type of drugsubstance: 
   ### SU - non-gliclazide
   ### TZD - rosiglitazone
-  ### GLP1-RA - lixisenatide, exenatide slow-release
+  ### SGLT2 - ertugliflozin
+  ### GLP1-RA - lixisenatide (exenatide, including prolonged-release, is kept:
+  ###   the analysis scripts group it with liraglutide)
   ### MFN
   filter(
     drug_class != "MFN" & drug_class != "INS" &

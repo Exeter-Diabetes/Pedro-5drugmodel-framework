@@ -111,22 +111,28 @@ drug_groups <- list(
   "DPP4i"                  = c("Sitagliptin", "Saxagliptin", "Alogliptin", "Linagliptin", "Vildagliptin"),
   "SU"                     = c("Gliclazide"),
   "TZD"                    = c("Pioglitazone"),
-  "GLP-1RA (older)"        = c("Liraglutide", "Dulaglutide", "Exenatide", "Exenatide prolonged-release"),
+  "GLP-1RA"                = c("Liraglutide", "Dulaglutide", "Exenatide", "Exenatide prolonged-release"),
   "Oral semaglutide"       = c("Oral semaglutide"),
   "Injectable semaglutide" = c("Low-dose semaglutide", "High-dose semaglutide", "Semaglutide, dose unclear"),
   "Tirzepatide"            = c("Tirzepatide")
 )
 
-# Older GLP-1RA broken down by substance (pooled group first, for reference)
-glp1_breakdown <- c(
-  drug_groups["GLP-1RA (older)"],
-  list(
-    "Liraglutide"                 = "Liraglutide",
-    "Dulaglutide"                 = "Dulaglutide",
-    "Exenatide"                   = "Exenatide",
-    "Exenatide prolonged-release" = "Exenatide prolonged-release"
-  )
+# GLP-1RA broken down by substance (semaglutide and tirzepatide are their own groups)
+glp1_breakdown <- list(
+  "Liraglutide"                 = "Liraglutide",
+  "Dulaglutide"                 = "Dulaglutide",
+  "Exenatide"                   = "Exenatide",
+  "Exenatide prolonged-release" = "Exenatide prolonged-release"
 )
+
+# First initiation date of the validation cohort, as in
+# 02.calibration_new_data_post2020.R
+cohort_start <- as.Date("2020-10-14")
+
+# Last period with complete 12-month follow-up in the data. On annual periods
+# this is 2022: the data end in mid-2024, so initiations in the second half of
+# 2023 do not yet have their 12-month HbA1c and 2023 is not a complete year.
+last_period <- "2022"
 
 unassigned <- setdiff(unique(analysis_dataset$drug_substance), unlist(drug_groups))
 if (length(unassigned) > 0) message("Substances not in drug_groups (dropped): ", paste(unassigned, collapse = ", "))
@@ -136,24 +142,20 @@ analysis_dataset_plot <- analysis_dataset %>%
 
 # reference baseline HbA1c at which the adjusted response is reported
 ref_prehba1c <- mean(analysis_dataset_plot$prehba1c, na.rm = TRUE)
-# reference drug line at which the adjusted response is reported
-ref_drugline <- "2"
 
-# 12-month HbA1c adjusted for baseline HbA1c and drug line (linear regression,
-# fitted separately in each drug group / period), reported at ref_prehba1c and
-# ref_drugline; response = adjusted 12-month HbA1c - ref_prehba1c
+# 12-month HbA1c adjusted for baseline HbA1c (linear regression, fitted
+# separately in each drug group / period), reported at ref_prehba1c;
+# response = adjusted 12-month HbA1c - ref_prehba1c. Baseline HbA1c is the main
+# determinant of the fall in HbA1c, so without it a drug or year with higher
+# baseline values would look more effective. Drug line is not adjusted for here;
+# the GLP-1RA comparison below checks that adding it changes nothing.
 adjusted_response <- function(d) {
-  d <- d %>% drop_na() %>% droplevels()
-  if (nrow(d) < 3 || !(ref_drugline %in% d$drugline)) {
+  d <- d %>% drop_na()
+  if (nrow(d) < 3) {
     return(tibble(adj_response = NA_real_, adj_response_low = NA_real_, adj_response_high = NA_real_))
   }
-  # drugline can only be adjusted for if more than one level is present
-  formula <- if (n_distinct(d$drugline) > 1) posthba1cfinal ~ prehba1c + drugline else posthba1cfinal ~ prehba1c
-  fit <- lm(formula, data = d)
-  p <- predict(fit,
-               newdata = data.frame(prehba1c = ref_prehba1c,
-                                    drugline = factor(ref_drugline, levels = levels(d$drugline))),
-               se.fit = TRUE)
+  fit <- lm(posthba1cfinal ~ prehba1c, data = d)
+  p <- predict(fit, newdata = data.frame(prehba1c = ref_prehba1c), se.fit = TRUE)
   tibble(
     adj_response = p$fit - ref_prehba1c,
     adj_response_low = p$fit - qt(0.975, p$df) * p$se.fit - ref_prehba1c,
@@ -180,7 +182,7 @@ summarise_response_by_period <- function(data, groups) {
     summarise(
       n_initiations = n(),
       n_with_outcome = sum(!is.na(posthba1cfinal)),
-      adj = list(adjusted_response(pick(prehba1c, drugline, posthba1cfinal))),
+      adj = list(adjusted_response(pick(prehba1c, posthba1cfinal))),
       .groups = "drop"
     ) %>%
     unnest(adj) %>%
@@ -197,20 +199,108 @@ print(as.data.frame(response_by_period_glp1_breakdown))
 output_path <- "Scripts/01.Temporal_Update/Outputs/treatment_response_by_period"
 dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
 
-write_csv(response_by_period, paste0(output_path, "/01.tx_response_by_period.csv"))
-write_csv(response_by_period_glp1_breakdown, paste0(output_path, "/01.tx_response_by_period_glp1_breakdown.csv"))
+# ref_prehba1c: the baseline HbA1c the adjusted response is predicted at
+write_csv(response_by_period %>% mutate(ref_prehba1c = ref_prehba1c),
+          paste0(output_path, "/01.tx_response_by_period.csv"))
+write_csv(response_by_period_glp1_breakdown %>% mutate(ref_prehba1c = ref_prehba1c),
+          paste0(output_path, "/01.tx_response_by_period_glp1_breakdown.csv"))
+
+
+## Why GLP1 is split into subtypes ----
+
+# The 5-drug model has a single GLP-1RA class, developed when most GLP-1RA
+# initiations were liraglutide or exenatide. Prescribing has since moved to
+# dulaglutide. If the substances differ in how much they lower HbA1c, the
+# response of the pooled class changes with this mix, so an update estimated for
+# the pooled class (an intercept) fits only the substance mix of the cohort it
+# is estimated in, and is a property of neither drug. The analysis scripts
+# therefore update dulaglutide and liraglutide (with exenatide) separately.
+# Three calculations show whether the split is needed:
+#   1) the share of each substance among GLP-1RA initiations, before and
+#      in the validation cohort (glp1_mix)
+#   2) the difference in 12-month HbA1c between substances, adjusted for
+#      baseline HbA1c and calendar year, so it is not the change over time
+#      (glp1_substance_difference); drug line is added as a check
+#   3) the adjusted response of the pooled class at the start and the end of
+#      the period (glp1_pooled_change)
+
+complete_label   <- paste0(year(plot_start), " to ", last_period, " (complete follow-up)")
+validation_label <- paste0("Validation cohort (from ", format(cohort_start), ")")
+
+glp1_data <- analysis_dataset_plot %>%
+  filter(drug_substance %in% unlist(glp1_breakdown)) %>%
+  mutate(
+    # liraglutide first: the reference in the comparison below
+    drug_substance = factor(drug_substance, levels = unlist(glp1_breakdown, use.names = FALSE)),
+    year = factor(year(dstartdate))
+  )
+
+# 1) substance mix
+glp1_mix <- glp1_data %>%
+  mutate(cohort = ifelse(dstartdate >= cohort_start, validation_label,
+                         paste0(format(plot_start), " to ", format(cohort_start - 1)))) %>%
+  count(cohort, drug_substance, name = "n_initiations") %>%
+  group_by(cohort) %>%
+  mutate(pct_of_glp1 = 100 * n_initiations / sum(n_initiations)) %>%
+  ungroup()
+
+# 2) 12-month HbA1c of each substance minus liraglutide (negative: a larger fall
+# in HbA1c than liraglutide), from one linear regression with baseline HbA1c and
+# calendar year (and, as a check, drug line). Substances with fewer than min_n
+# initiations with an outcome are not reported.
+substance_difference <- function(data, cohort_label, adjustment, terms) {
+  data <- data %>% filter(!is.na(posthba1cfinal)) %>% droplevels()
+  fit <- lm(as.formula(paste("posthba1cfinal ~ drug_substance + prehba1c + year", terms)), data = data)
+  ci <- confint(fit)
+  n_outcome <- table(data$drug_substance)
+  tibble(term = names(coef(fit)), estimate = coef(fit), low = ci[, 1], high = ci[, 2]) %>%
+    filter(str_starts(term, "drug_substance")) %>%
+    transmute(
+      cohort = cohort_label,
+      adjustment = adjustment,
+      substance = sub("^drug_substance", "", term),
+      n_with_outcome = as.integer(n_outcome[substance]),
+      n_liraglutide_with_outcome = as.integer(n_outcome[["Liraglutide"]]),
+      difference_vs_liraglutide = estimate,
+      low, high
+    ) %>%
+    filter(n_with_outcome >= min_n)
+}
+
+glp1_complete   <- glp1_data %>% filter(year(dstartdate) <= as.numeric(last_period))
+glp1_validation <- glp1_data %>% filter(dstartdate >= cohort_start)
+
+glp1_substance_difference <- bind_rows(
+  substance_difference(glp1_complete,   complete_label,   "baseline HbA1c, calendar year", ""),
+  substance_difference(glp1_complete,   complete_label,   "baseline HbA1c, calendar year, drug line", "+ drugline"),
+  substance_difference(glp1_validation, validation_label, "baseline HbA1c, calendar year", ""),
+  substance_difference(glp1_validation, validation_label, "baseline HbA1c, calendar year, drug line", "+ drugline")
+)
+
+# 3) adjusted response of the pooled class (all GLP-1RA together, as the
+# 5-drug model treats them) in the first and the last two complete years
+pooled_years <- response_by_period %>%
+  filter(drug_group == "GLP-1RA", !is.na(adj_response), period <= last_period) %>%
+  pull(period)
+glp1_pooled_change <- response_by_period %>%
+  filter(drug_group == "GLP-1RA") %>%
+  mutate(years = case_when(period %in% head(pooled_years, 2) ~ paste(head(pooled_years, 2), collapse = "-"),
+                           period %in% tail(pooled_years, 2) ~ paste(tail(pooled_years, 2), collapse = "-"))) %>%
+  filter(!is.na(years)) %>%
+  group_by(years) %>%
+  summarise(n_initiations = sum(n_initiations), mean_adj_response = mean(adj_response), .groups = "drop")
+
+print(as.data.frame(glp1_mix))
+print(as.data.frame(glp1_substance_difference))
+print(as.data.frame(glp1_pooled_change))
+
+write_csv(glp1_mix, paste0(output_path, "/01.glp1_substance_mix.csv"))
+write_csv(glp1_substance_difference, paste0(output_path, "/01.glp1_substance_difference.csv"))
+write_csv(glp1_pooled_change, paste0(output_path, "/01.glp1_pooled_change.csv"))
 
 
 ## Plot ----
 
-# First initiation date of the validation cohort, as in
-# 02.calibration_new_data_post2020.R
-cohort_start <- as.Date("2020-10-14")
-
-# Last period with complete 12-month follow-up in the data. On annual periods
-# this is 2022: the data end in mid-2024, so initiations in the second half of
-# 2023 do not yet have their 12-month HbA1c and 2023 is not a complete year.
-last_period <- "2022"
 last_period_start <- response_by_period$period_start[response_by_period$period == last_period][1]
 
 # Drug colours (Okabe-Ito). The two blocks below are the groups that ever share
@@ -220,7 +310,7 @@ last_period_start <- response_by_period$period_start[response_by_period$period =
 drug_group_colours <- c(
   # 5-drug model classes
   "SGLT2i"                      = "#E69F00",
-  "GLP-1RA (older)"             = "#56B4E9",
+  "GLP-1RA"                     = "#56B4E9",
   "DPP4i"                       = "#0072B2",
   "SU"                          = "#CC79A7",
   "TZD"                         = "#D55E00",
@@ -228,7 +318,7 @@ drug_group_colours <- c(
   "Oral semaglutide"            = "#009E73",
   "Injectable semaglutide"      = "#D55E00",
   "Tirzepatide"                 = "#CC79A7",
-  # older GLP-1RA substances. Exenatide prolonged-release takes the orange that
+  # GLP-1RA substances. Exenatide prolonged-release takes the orange that
   # SGLT2i uses in the drug-class figures: the two never appear together, and
   # the pink it used before sat too close to the dulaglutide green for
   # deuteranopes once these five shared a single panel.
@@ -321,48 +411,48 @@ plot_ready <- function(data, groups, x_from = plot_start) {
     droplevels()
 }
 
-# At slide text sizes five long drug names do not fit on one legend row, so
-# wrap them onto two.
+# Five long drug names do not fit on one legend row, so wrap them onto two.
 legend_guide <- function(d) {
   guide_legend(nrow = if (nlevels(droplevels(d$drug_group)) > 4) 2 else 1, byrow = TRUE)
 }
 
-# Text and mark sizes, tuned for figures pasted into PowerPoint: large enough to
-# read from the back of a room, and scaled together so the lines and points do
-# not look spindly beside the labels. Everything below derives from text_base,
-# so drop it to ~12 for a print figure and the whole set scales with it.
-text_base   <- 19
-size_axis_text  <- text_base
-size_axis_title <- text_base * 1.15
-size_legend     <- text_base * 1.05
-size_strip      <- text_base * 1.1
-width_line      <- 1.3
-size_point      <- 2.9
-width_rule      <- 0.9   # the zero line and the cohort-start line
+# Text and mark sizes for print, at journal page width (about 7 inches), scaled
+# together so lines and points sit in proportion to the labels. Everything below
+# derives from text_base, so raise it (to ~19) for slides and the set scales.
+text_base   <- 10
+size_axis_text  <- text_base * 0.9
+size_axis_title <- text_base
+size_legend     <- text_base * 0.9
+size_strip      <- text_base
+width_line      <- 0.6
+size_point      <- 1.5
+width_rule      <- 0.4   # the zero line and the cohort-start line
 
 theme_response <- function() {
-  theme_minimal(base_size = text_base) +
+  theme_classic(base_size = text_base) +
     theme(
-      panel.grid.minor = element_blank(),
-      panel.grid.major = element_line(linewidth = 0.5),
+      # light horizontal guides only, for reading values off the y axis
+      panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.3),
+      axis.line        = element_line(colour = "black", linewidth = 0.4),
+      axis.ticks       = element_line(colour = "black", linewidth = 0.4),
+      axis.text        = element_text(size = size_axis_text, colour = "black"),
+      axis.title       = element_text(size = size_axis_title),
       legend.position  = "top",
       legend.title     = element_blank(),
       legend.text      = element_text(size = size_legend),
       legend.key.width = unit(1.6, "lines"),
-      axis.title       = element_text(size = size_axis_title),
-      axis.text        = element_text(size = size_axis_text),
+      legend.margin    = margin(0, 0, 0, 0),
+      strip.background = element_blank(),
       strip.text       = element_text(size = size_strip, face = "bold", hjust = 0),
-      plot.subtitle    = element_text(size = size_axis_text * 0.95, colour = "grey30"),
-      plot.margin      = margin(6, 12, 6, 6)
+      plot.tag         = element_text(size = size_axis_title * 1.1, face = "bold"),
+      plot.margin      = margin(4, 8, 4, 4)
     )
 }
 
-# The axis title stays to one short line so it does not run into the count
-# strip's label below it; the reference conditions the response is predicted at
-# go in a subtitle, which reads better on a slide than rotated axis text.
-y_response_label <- bquote("Adjusted HbA"[1*c]*" response (mmol/mol)")
-response_subtitle <- paste0("12-month response, predicted at baseline HbA1c = ",
-                            round(ref_prehba1c, 1), " mmol/mol, drug line ", ref_drugline)
+# The response is the 12-month change in HbA1c predicted at ref_prehba1c. That
+# reference value is reported in the CSVs and the figure legend rather than on
+# the figures, which carry only axis titles.
+y_response_label <- bquote("Adjusted change in HbA"[1*c]*" (mmol/mol)")
 
 # Number of initiations per period, drawn as a short strip sharing the x axis
 # with the response panel above it. This replaces the point-size aesthetic:
@@ -381,14 +471,10 @@ count_strip <- function(d, x_scale, log_counts = FALSE, count_legend = FALSE) {
     theme_response() +
     guides(colour = legend_guide(d)) +
     theme(legend.position = if (count_legend) "bottom" else "none") +
-    # the strip is labelled horizontally above itself: at slide text sizes a
-    # rotated y title here ran into the y title of the panel above, and
-    # horizontal text is easier to read from a distance anyway
-    labs(x = "Year of initiation", y = NULL,
-         subtitle = "Number of initiations")
+    labs(x = "Year of initiation", y = "Initiations")
   if (log_counts) {
     p + scale_y_log10(labels = scales::comma) +
-      labs(subtitle = "Number of initiations (log scale)")
+      labs(y = "Initiations\n(log scale)")
   } else {
     p + scale_y_continuous(labels = scales::comma)
   }
@@ -424,7 +510,7 @@ plot_response_faceted <- function(data, groups, x_from = plot_start,
     guides(colour = "none") +
     theme_response() +
     theme(axis.text.x = element_blank()) +
-    labs(x = NULL, y = y_response_label, subtitle = response_subtitle)
+    labs(x = NULL, y = y_response_label)
 
   p_resp / count_strip(d, x_scale, log_counts, count_legend = TRUE) +
     plot_layout(heights = c(4, 1))
@@ -450,7 +536,7 @@ plot_response_overlaid <- function(data, groups, x_from = plot_start,
     guides(colour = legend_guide(d)) +
     theme_response() +
     theme(axis.text.x = element_blank()) +
-    labs(x = NULL, y = y_response_label, subtitle = response_subtitle)
+    labs(x = NULL, y = y_response_label)
 
   if (vline) {
     p_resp <- p_resp + geom_vline(xintercept = cohort_start, colour = "black",
@@ -461,7 +547,7 @@ plot_response_overlaid <- function(data, groups, x_from = plot_start,
 }
 
 # 1) Drug classes in the 5-drug model
-drugclass_groups <- c("SGLT2i", "DPP4i", "SU", "TZD", "GLP-1RA (older)")
+drugclass_groups <- c("SGLT2i", "DPP4i", "SU", "TZD", "GLP-1RA")
 
 plot_response_by_period_drugclasses <- plot_response_faceted(
   response_by_period,
@@ -471,7 +557,7 @@ plot_response_by_period_drugclasses <- plot_response_faceted(
 )
 
 save_plot(plot_response_by_period_drugclasses, paste0(output_path, "/01.tx_response_by_period_drugclasses.pdf"),
-          panel_width = 10, panel_height = 2.2)
+          panel_width = 6, panel_height = 1.6)
 
 # 1b) The same drug classes overlaid in one panel, for reading the drugs against
 # each other rather than each drug's own trajectory
@@ -483,40 +569,142 @@ plot_response_by_period_drugclasses_overlaid <- plot_response_overlaid(
 )
 
 save_plot(plot_response_by_period_drugclasses_overlaid, paste0(output_path, "/01.tx_response_by_period_drugclasses_overlaid.pdf"),
-          panel_width = 10, panel_height = 1.6)
+          panel_width = 6, panel_height = 1.1)
 
-# 2) Older GLP-1RA broken down by substance
+# 2) GLP-1RA broken down by substance
 plot_response_by_period_glp1_breakdown <- plot_response_faceted(
   response_by_period_glp1_breakdown,
   groups = names(glp1_breakdown)
 )
 
 save_plot(plot_response_by_period_glp1_breakdown, paste0(output_path, "/01.tx_response_by_period_glp1_breakdown.pdf"),
-          panel_width = 10, panel_height = 2.2)
+          panel_width = 6, panel_height = 1.6)
 
-# 2b) The same substances overlaid in one panel. The count strip carries the
-# lira -> dula switch, and the response lines show whether the agents differ.
-plot_response_by_period_glp1_breakdown_overlaid <- plot_response_overlaid(
-  response_by_period_glp1_breakdown,
-  groups = names(glp1_breakdown),
-  date_breaks = "2 years"
-)
+# 2b) Display item: why GLP1 is split into subtypes (see "Why GLP1 is split into
+# subtypes" above). Panel A: adjusted response of each substance by year, with
+# 95% confidence intervals, as these carry the comparison between substances.
+# Panel B: each substance's share of GLP-1RA initiations, the change in
+# prescribing that moves the pooled class response. Both stop at the last year
+# with complete follow-up.
+glp1_share_by_year <- glp1_complete %>%
+  mutate(period_start = make_date(year(dstartdate), 1, 1)) %>%
+  count(period_start, drug_group = drug_substance, name = "n_initiations") %>%
+  group_by(period_start) %>%
+  mutate(pct_of_glp1 = 100 * n_initiations / sum(n_initiations)) %>%
+  ungroup()
+
+write_csv(glp1_share_by_year, paste0(output_path, "/01.glp1_substance_share_by_year.csv"))
+
+glp1_resp <- plot_ready(response_by_period_glp1_breakdown, names(glp1_breakdown))
+glp1_x_scale <- scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+                             limits = c(plot_start - 150, last_period_start + 150))
+# substances side by side within a year, so the intervals do not overlap
+glp1_dodge <- position_dodge(width = 160)
+
+# no zero line: every response is a fall, and a zero line would stretch the
+# y axis and shrink the gap between substances, which is what is compared
+plot_glp1_split_resp <- ggplot(glp1_resp, aes(period_start, adj_response, colour = drug_group)) +
+  geom_vline(xintercept = cohort_start, colour = "black", linewidth = width_rule) +
+  annotate("text", x = cohort_start, y = Inf, label = " Validation\n cohort", hjust = 0, vjust = 1.1,
+           size = size_axis_text / .pt, colour = "grey20", lineheight = 0.9) +
+  geom_line(linewidth = width_line, position = glp1_dodge) +
+  geom_errorbar(aes(ymin = adj_response_low, ymax = adj_response_high),
+                width = 0, linewidth = width_line * 0.6, position = glp1_dodge) +
+  geom_point(size = size_point, position = glp1_dodge) +
+  glp1_x_scale +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  scale_colour_manual(values = drug_group_colours) +
+  guides(colour = legend_guide(glp1_resp)) +
+  theme_response() +
+  theme(axis.text.x = element_blank()) +
+  labs(x = NULL, y = y_response_label)
+
+plot_glp1_split_share <- ggplot(glp1_share_by_year, aes(period_start, pct_of_glp1, colour = drug_group)) +
+  geom_vline(xintercept = cohort_start, colour = "black", linewidth = width_rule) +
+  geom_line(linewidth = width_line) +
+  geom_point(size = size_point * 0.85) +
+  glp1_x_scale +
+  scale_y_continuous(limits = c(0, 100), breaks = c(0, 50, 100)) +
+  scale_colour_manual(values = drug_group_colours) +
+  theme_response() +
+  theme(legend.position = "none") +
+  labs(x = "Year of initiation", y = "Share of GLP-1RA\ninitiations (%)")
+
+plot_response_by_period_glp1_breakdown_overlaid <- (plot_glp1_split_resp / plot_glp1_split_share) +
+  plot_layout(heights = c(3, 1.4)) +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = size_axis_title, face = "bold"))
 
 save_plot(plot_response_by_period_glp1_breakdown_overlaid, paste0(output_path, "/01.tx_response_by_period_glp1_breakdown_overlaid.pdf"),
-          panel_width = 10, panel_height = 1.6)
+          panel_width = 6, panel_height = 1.1)
 
-# 3) Older GLP-1RA vs semaglutide / tirzepatide, overlaid so the drugs can be
+# Figure legend, with the numbers from this run, for the paper
+fmt <- function(x) sprintf("%.1f", x)
+difference_text <- function(cohort_label, adjustment_label) {
+  d <- glp1_substance_difference %>%
+    filter(cohort == cohort_label, adjustment == adjustment_label, substance == "Dulaglutide")
+  paste0(fmt(d$difference_vs_liraglutide), " mmol/mol (95% CI ", fmt(d$low), " to ", fmt(d$high), ")")
+}
+mix_pct <- function(cohort_label, substances) {
+  fmt(sum(glp1_mix$pct_of_glp1[glp1_mix$cohort == cohort_label & glp1_mix$drug_substance %in% substances]))
+}
+before_label <- setdiff(unique(glp1_mix$cohort), validation_label)
+exenatide <- c("Exenatide", "Exenatide prolonged-release")
+
+glp1_split_legend <- c(
+  "# Figure legend: response to GLP-1 receptor agonists by substance and year",
+  "",
+  paste0(
+    "**(A)** Change in HbA1c 12 months after starting each GLP-1 receptor agonist (GLP-1RA), ",
+    "by calendar year of initiation, CPRD Aurum ", year(plot_start), " to ", last_period, ". ",
+    "For each substance and year, 12-month HbA1c was regressed on baseline HbA1c and the change is ",
+    "reported at the mean baseline HbA1c of ", fmt(ref_prehba1c), " mmol/mol; more negative values are larger falls. ",
+    "Bars are 95% confidence intervals. Substance-years with fewer than ", min_n, " initiations are not shown. ",
+    "**(B)** Each substance's share of GLP-1RA initiations. Semaglutide (added to the model as its own ",
+    "drug classes) and tirzepatide are not included. The vertical line marks the start of the validation cohort (",
+    format(cohort_start, "%d %B %Y"), "). ", last_period, " is the last year with complete 12-month follow-up."
+  ),
+  "",
+  paste0(
+    "**Why the GLP-1RA class is split.** The 5-drug model has one GLP-1RA class, developed when most ",
+    "GLP-1RA initiations were liraglutide or exenatide. Within each substance, the response changed little ",
+    "over time (A), but the substances differ: after adjustment for baseline HbA1c and calendar year, the ",
+    "difference in 12-month HbA1c, dulaglutide minus liraglutide, was ",
+    difference_text(complete_label, "baseline HbA1c, calendar year"), " (",
+    difference_text(complete_label, "baseline HbA1c, calendar year, drug line"),
+    " when also adjusted for drug line; ", difference_text(validation_label, "baseline HbA1c, calendar year"),
+    " within the validation cohort). Prescribing moved from liraglutide and exenatide to dulaglutide (B): ",
+    "dulaglutide was ", mix_pct(before_label, "Dulaglutide"), "% of GLP-1RA initiations from ",
+    format(plot_start, "%Y"), " until the validation cohort and ", mix_pct(validation_label, "Dulaglutide"),
+    "% within it. The adjusted response of the pooled class therefore moved from ",
+    fmt(glp1_pooled_change$mean_adj_response[1]), " mmol/mol in ", glp1_pooled_change$years[1], " to ",
+    fmt(glp1_pooled_change$mean_adj_response[2]), " mmol/mol in ", glp1_pooled_change$years[2],
+    ", largely through the change in mix. An update estimated for the pooled class would describe the ",
+    "substance mix of the cohort it was estimated in rather than either drug, so dulaglutide and liraglutide ",
+    "are updated separately. Exenatide (", mix_pct(validation_label, exenatide),
+    "% of GLP-1RA initiations in the validation cohort) is grouped with liraglutide."
+  ),
+  "",
+  paste0(
+    "The comparison between substances is observational and adjusted only for baseline HbA1c and calendar ",
+    "year (and drug line as a check), so part of it may reflect differences in who was prescribed each drug."
+  )
+)
+
+writeLines(glp1_split_legend, paste0(output_path, "/01.glp1_split_figure_legend.md"))
+
+# 3) GLP-1RA vs semaglutide / tirzepatide, overlaid so the drugs can be
 # compared directly. Starts in 2018 rather than 2013: semaglutide only appears
 # from 2019 (injectable) and 2021 (oral), so a 2013 start left those series
 # squeezed into the right-hand third of the panel.
 plot_response_by_period_glp1 <- plot_response_overlaid(
   response_by_period,
-  groups = c("GLP-1RA (older)", "Oral semaglutide", "Injectable semaglutide", "Tirzepatide"),
+  groups = c("GLP-1RA", "Oral semaglutide", "Injectable semaglutide", "Tirzepatide"),
   x_from = "2018-01-01"
 )
 
 save_plot(plot_response_by_period_glp1, paste0(output_path, "/01.tx_response_by_period_glp1.pdf"),
-          panel_width = 10, panel_height = 1.6)
+          panel_width = 6, panel_height = 1.1)
 
 # 4) Change in adjusted response relative to each drug's own 2013-14 level.
 # The absolute figures above share a ~22 mmol/mol y axis because the drugs sit
@@ -549,8 +737,7 @@ plot_response_change_from_baseline <- response_change_from_baseline %>%
   guides(colour = legend_guide(response_change_from_baseline)) +
   theme_response() +
   labs(x = "Year of initiation",
-       y = bquote("Change vs 2013-14 (mmol/mol)"),
-       subtitle = response_subtitle)
+       y = bquote("Change vs 2013-14 (mmol/mol)"))
 
 save_plot(plot_response_change_from_baseline, paste0(output_path, "/01.tx_response_change_from_baseline.pdf"),
-          panel_width = 10, panel_height = 5)
+          panel_width = 6, panel_height = 3)
