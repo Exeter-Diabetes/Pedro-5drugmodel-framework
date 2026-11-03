@@ -2,8 +2,7 @@
 ##  and how to visualise calibration results
 ##
 ## Model version: v1, the published model (Dennis et al. Lancet 2025) for the
-##  main 5 drug classes. To validate the updated model with semaglutide and
-##  tirzepatide (v2), use example_validation_script_v2.R instead.
+##  5 drug classes.
 ##
 ## Model predictions come from the online model calculator or from the model
 ##  files (use_calculator, Step 0).
@@ -58,17 +57,23 @@ dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
 calculator_upload_file  <- paste0(output_path, "/calculator_upload.csv") # written in Step 1d
 calculator_results_file <- "calculator_predictions.csv"                   # returned by the calculator
 
-# Drug classes of this model version (do not change these):
-#   main_drugs: the main 5 drug classes.
-#   extra_drugs: none in this model version (v2 adds semaglutide and tirzepatide).
-main_drugs  <- c("SGLT2", "GLP1", "DPP4", "SU", "TZD")
-extra_drugs <- character(0)
+# The drug classes the model predicts (do not change these)
+model_drugs <- c("SGLT2", "GLP1", "DPP4", "SU", "TZD")
 
-# All drug classes the model predicts
-model_drugs <- c(extra_drugs, main_drugs)
+# The drug classes to analyse. You do not need initiations of every drug class: the
+# drug classes analysed are those of drugs_selected with initiations in your data
+# (drugs, set in Step 1c). To leave out a drug class, e.g. one with too few
+# initiations for stable estimates, remove it here, e.g.
+#   drugs_selected <- c("SGLT2", "GLP1", "DPP4", "SU")
+# Its initiations are dropped after imputation (Step 1c), so they still help impute
+# missing values. The model still predicts it (original predictions, not
+# recalibrated), so it can be the best drug class in the "all" outputs (Step 3).
+drugs_selected <- model_drugs
 
-# You do not need initiations of every drug class: the drug classes analysed are
-# the ones in your data (drugs, set in Step 1c).
+if (!all(drugs_selected %in% model_drugs)) {
+  stop("drugs_selected has drug classes the model does not predict: ",
+       paste(setdiff(drugs_selected, model_drugs), collapse = ", "), call. = FALSE)
+}
 
 # drug class names as shown in the plots
 drug_labels <- c("SGLT2" = "SGLT2i", "GLP1" = "GLP-1RA", "DPP4" = "DPP4i",
@@ -338,11 +343,14 @@ cat(sum(!in_range), "initiations outside the accepted ranges in at least one imp
 analysis_dataset <- analysis_dataset[in_range, ]
 imputed_list <- lapply(imputed_list, function(imputed) imputed[in_range, ])
 
-# The drug classes analysed: those of model_drugs with initiations in your data.
-# main_present and extra_present split them into main and extra drug classes.
-drugs <- model_drugs[model_drugs %in% analysis_dataset$drugclass]
-main_present  <- intersect(main_drugs, drugs)
-extra_present <- intersect(extra_drugs, drugs)
+# Initiations of drug classes not in drugs_selected (Step 0) are dropped
+selected <- analysis_dataset$drugclass %in% drugs_selected
+cat(sum(!selected), "initiations of drug classes not in drugs_selected are dropped\n")
+analysis_dataset <- analysis_dataset[selected, ]
+imputed_list <- lapply(imputed_list, function(imputed) imputed[selected, ])
+
+# The drug classes analysed: those of drugs_selected with initiations in your data.
+drugs <- model_drugs[model_drugs %in% drugs_selected & model_drugs %in% analysis_dataset$drugclass]
 
 analysis_dataset <- analysis_dataset %>%
   mutate(drugclass = factor(drugclass, levels = drugs))
@@ -463,9 +471,9 @@ if (use_calculator) {
       mutate(imd5 = factor("3", levels = c("1 (least)", "2", "3", "4", "5 (most)")))
   })
 
-  # Published model, for each of the main 5 drug classes: predicted in each imputed
+  # Published model, for each of its 5 drug classes: predicted in each imputed
   # dataset and averaged across them
-  for (drug in main_drugs) {
+  for (drug in c("SGLT2", "GLP1", "DPP4", "SU", "TZD")) {
     analysis_dataset[[paste0("pred.", drug)]] <- rowMeans(sapply(prediction_list, function(prediction_data) {
       as.numeric(predict(m1.5.final, newdata = prediction_data %>% mutate(drugclass = drug)))
     }))
@@ -595,8 +603,8 @@ for (drug in model_drugs) {
 }
 recalib_original_params <- summarize_lm(fit_original, "original")
 
-# drug classes not in your data have no data to be recalibrated, so they keep their
-# original predictions
+# drug classes not analysed (not in drugs) have no data to be recalibrated, so they
+# keep their original predictions
 for (drug in setdiff(model_drugs, drugs)) {
   analysis_dataset[[paste0("pred.recal_large.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]]
   analysis_dataset[[paste0("pred.recal.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]]
@@ -729,9 +737,10 @@ pairwise_plot <- function(plot_data, plot_title, plot_subtitle = NULL) {
 
 # side of the square pairwise panels, in inches: the same in every script, and
 # wide enough for the longest drug pair name on one line
-# ("Oral Semaglutide vs GLP-1RA (older)")
 pairwise_panel_size <- 3.4
 
+
+#############################################################################
 
 # Step 3: Evaluate performance ----------------------------------------------
 
@@ -760,45 +769,23 @@ adjustment_vars = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
                      "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth",
                      "sex", "smoke", "ncurrtx", "drugline")
 
-# - Pairwise figure: the drug classes in your data against each other
+# - Pairwise figure: the drug classes analysed against each other
 
-# Pairs with the same predicted benefit for every patient (drug classes whose
-# predictions differ by an intercept only) cannot be split into groups by predicted
-# benefit, so they are shown as a single group of all patients. This does not
-# happen with the main 5 drug classes.
-constant_benefit_tolerance <- 0.1 # mmol/mol, range of the group means
-
-# helper: pairwise calibration plot of the drug classes in drug1_set (drug 1)
-# against those in drug2_set (drug 2), one panel per pair. Returns NULL when
-# your data has no pair of drug classes for it.
-plot_pairwise <- function(pairwise_results, drug1_set, drug2_set, plot_title, plot_subtitle) {
-  plot_data <- pairwise_results %>%
-    filter(drug1 %in% drug1_set, drug2 %in% drug2_set) %>%
-    group_by(drug1, drug2) %>%
-    mutate(
-      constant = diff(range(mean[n_groups == max(cal_groups)], na.rm = TRUE)) < constant_benefit_tolerance
-    ) %>%
+# helper: pairwise calibration plot, one panel per pair of drug classes
+plot_pairwise <- function(pairwise_results, plot_title, plot_subtitle) {
+  pairwise_results %>%
     group_by(drug1, drug2, n_groups) %>%
     mutate(min_val = min(n_drug1, n_drug2)) %>%
     group_by(drug1, drug2) %>%
     mutate(
       # the largest number of groups with at least 100 patients per drug in every group
-      best_grouping = suppressWarnings(max(n_groups[n_groups %in% cal_groups & min_val >= 100])),
-      select_grouping = case_when(
-        constant ~ 1,
-        is.finite(best_grouping) ~ best_grouping,
-        TRUE ~ min(cal_groups)
-      )
+      best_grouping = suppressWarnings(max(n_groups[min_val >= 100])),
+      select_grouping = ifelse(is.finite(best_grouping), best_grouping, min(cal_groups))
     ) %>%
     ungroup() %>%
     filter(n_groups == select_grouping) %>%
-    mutate(title = paste0(recode(drug1, !!!drug_labels), " vs ", recode(drug2, !!!drug_labels),
-                          ifelse(constant, "\n(single group)", "")))
-
-  # no pair of drug classes for this figure in your data
-  if (nrow(plot_data) == 0) return(NULL)
-
-  pairwise_plot(plot_data, plot_title, plot_subtitle)
+    mutate(title = paste0(recode(drug1, !!!drug_labels), " vs ", recode(drug2, !!!drug_labels))) %>%
+    pairwise_plot(plot_title, plot_subtitle)
 }
 
 ### Original predictions
@@ -808,12 +795,11 @@ pairwise_results_original <- cateval::pairwise_calibration(
   drugs = drugs,
   prediction_vars = paste0("pred.", drugs),
   outcome_var = outcome_var,
-  # 1 (a single group) is only used for pairs with the same predicted benefit for every patient
-  cal_groups = c(1, cal_groups),
+  cal_groups = cal_groups,
   adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
-plot_pairwise_original_main <- plot_pairwise(pairwise_results_original, main_present, main_present,
+plot_pairwise_original <- plot_pairwise(pairwise_results_original,
   "Pairwise Drug Calibration", "Original predictions")
 
 ### Recalibration-in-the-large predictions
@@ -823,12 +809,11 @@ pairwise_results_recal_large <- cateval::pairwise_calibration(
   drugs = drugs,
   prediction_vars = paste0("pred.recal_large.", drugs),
   outcome_var = outcome_var,
-  # 1 (a single group) is only used for pairs with the same predicted benefit for every patient
-  cal_groups = c(1, cal_groups),
+  cal_groups = cal_groups,
   adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
-plot_pairwise_recal_large_main <- plot_pairwise(pairwise_results_recal_large, main_present, main_present,
+plot_pairwise_recal_large <- plot_pairwise(pairwise_results_recal_large,
   "Pairwise Drug Calibration", "Recalibration-in-the-large")
 
 ### Recalibration predictions
@@ -838,12 +823,11 @@ pairwise_results_recal <- cateval::pairwise_calibration(
   drugs = drugs,
   prediction_vars = paste0("pred.recal.", drugs),
   outcome_var = outcome_var,
-  # 1 (a single group) is only used for pairs with the same predicted benefit for every patient
-  cal_groups = c(1, cal_groups),
+  cal_groups = cal_groups,
   adjustment_var = unique(c(adjustment_vars, prognostic_vars))
 )
 
-plot_pairwise_recal_main <- plot_pairwise(pairwise_results_recal, main_present, main_present,
+plot_pairwise_recal <- plot_pairwise(pairwise_results_recal,
   "Pairwise Drug Calibration", "Recalibration")
 
 
@@ -861,8 +845,8 @@ plot_pairwise_recal_main <- plot_pairwise(pairwise_results_recal, main_present, 
 # - Points above the red line indicate underprediction (observed benefit greater than predicted)
 # - Points below the red line indicate overprediction (observed benefit less than predicted)
 
-# The recommended (predicted best) drug class is chosen from the drug classes in your
-# data (drugs), as every patient needs patients on their best drug class to be
+# The recommended (predicted best) drug class is chosen from the drug classes
+# analysed (drugs), as every patient needs patients on their best drug class to be
 # matched with.
 
 # Covariates used to match concordant and discordant patients. Matching is 1:1
@@ -1136,7 +1120,7 @@ plot_overall_original <- plot_original_conc + plot_original_disc + plot_original
   patchwork::plot_layout(nrow = 1) +
   patchwork::plot_annotation(title = "Overall Benefit Calibration (original predictions)", theme = theme(plot.title = element_text(size = 20)))
 
-# calibration split by drug class (one panel per drug class in your data)
+# calibration split by drug class (one panel per drug class analysed)
 by_drug_original <- cateval::benefit_by_drug(match_original$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 plot_overall_original_bydrug <- plot_calibration_by_drug(by_drug_original, title = "Overall Benefit Calibration by drug class (original predictions)")
 
@@ -1330,7 +1314,9 @@ plot_pred_obs_recal <- analysis_dataset %>%
 # The best drug class is chosen in two ways:
 #   - all: from all drug classes the model predicts (model_drugs), as the model
 #     would recommend them
-#   - available: from the drug classes in your data (drugs) only
+#   - available: from the drug classes analysed (drugs) only
+#   (only when some drug classes the model predicts are not analysed; otherwise
+#   it is the same as all and is not made)
 
 # helper: distribution of the predicted best drug class (rank 1), using the
 # predictions with the given prefix for the drug classes in drug_set
@@ -1462,30 +1448,33 @@ plot_tolerance3_added_removed <- function(prefix, drug_set, step_title, set_titl
     )
 }
 
+# available is only made when it differs from all
+make_available <- !setequal(drugs, model_drugs)
+
 ### Original predictions
 plot_rank1_original_all       <- plot_rank1("pred.", model_drugs, "Original predictions", "best of all drug classes")
-plot_rank1_original_available <- plot_rank1("pred.", drugs, "Original predictions", "best of the drug classes in the data")
+plot_rank1_original_available <- if (make_available) plot_rank1("pred.", drugs, "Original predictions", "best of the drug classes analysed")
 
 ### Recalibration-in-the-large predictions
 plot_rank1_recal_large_all       <- plot_rank1("pred.recal_large.", model_drugs, "Recalibration-in-the-large", "best of all drug classes")
-plot_rank1_recal_large_available <- plot_rank1("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes in the data")
+plot_rank1_recal_large_available <- if (make_available) plot_rank1("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes analysed")
 
 plot_tolerance3_recal_large_all       <- plot_tolerance3_added_removed("pred.recal_large.", model_drugs, "Recalibration-in-the-large", "best of all drug classes")
-plot_tolerance3_recal_large_available <- plot_tolerance3_added_removed("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes in the data")
+plot_tolerance3_recal_large_available <- if (make_available) plot_tolerance3_added_removed("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes analysed")
 
 ### Recalibration predictions
 plot_rank1_recal_all       <- plot_rank1("pred.recal.", model_drugs, "Recalibration", "best of all drug classes")
-plot_rank1_recal_available <- plot_rank1("pred.recal.", drugs, "Recalibration", "best of the drug classes in the data")
+plot_rank1_recal_available <- if (make_available) plot_rank1("pred.recal.", drugs, "Recalibration", "best of the drug classes analysed")
 
 plot_tolerance3_recal_all       <- plot_tolerance3_added_removed("pred.recal.", model_drugs, "Recalibration", "best of all drug classes")
-plot_tolerance3_recal_available <- plot_tolerance3_added_removed("pred.recal.", drugs, "Recalibration", "best of the drug classes in the data")
+plot_tolerance3_recal_available <- if (make_available) plot_tolerance3_added_removed("pred.recal.", drugs, "Recalibration", "best of the drug classes analysed")
 
 
 ## Best drug proportions and concordance ----
 
 ## For each set of predictions: how often each drug class is the predicted best
 ## (rank 1), and how often the drug initiated was that drug (concordance), with the
-## best drug class chosen from all drug classes and from the drug classes in your data
+## best drug class chosen from all drug classes and from the drug classes analysed
 
 # helper: one row per drug class (plus "All") for the predictions with the given
 # prefix, with the best drug class chosen from the drug classes in drug_set
@@ -1545,11 +1534,11 @@ summarise_concordance <- function(prefix, drug_set, step_title, best_drug_from) 
 
 concordance_summary <- bind_rows(
   summarise_concordance("pred.", model_drugs, "Original", "all"),
-  summarise_concordance("pred.", drugs, "Original", "available"),
+  if (make_available) summarise_concordance("pred.", drugs, "Original", "available"),
   summarise_concordance("pred.recal_large.", model_drugs, "Recalibration-in-the-large", "all"),
-  summarise_concordance("pred.recal_large.", drugs, "Recalibration-in-the-large", "available"),
+  if (make_available) summarise_concordance("pred.recal_large.", drugs, "Recalibration-in-the-large", "available"),
   summarise_concordance("pred.recal.", model_drugs, "Recalibration", "all"),
-  summarise_concordance("pred.recal.", drugs, "Recalibration", "available")
+  if (make_available) summarise_concordance("pred.recal.", drugs, "Recalibration", "available")
 )
 
 print(concordance_summary)
@@ -1580,22 +1569,19 @@ write.csv(
 ## The prognostic factor (prognostic_vars) is a cross-cutting control applied
 ## within every step when identified — adjusted for in the pairwise analysis and
 ## matched on in the overall-benefit analysis — not a step of its own.
-##
-## Only the figures possible with the drug classes in your data are saved.
 
 
 ## Save plots to separate PDFs by validation step ----
 
-# helper: save a pairwise figure (nothing is saved when your data has no pair
-# of drug classes for it)
+# helper: save a pairwise figure
 save_pairwise <- function(fig, file) {
-  if (!is.null(fig)) save_plot(fig, file, panel_width = pairwise_panel_size, panel_height = pairwise_panel_size)
+  save_plot(fig, file, panel_width = pairwise_panel_size, panel_height = pairwise_panel_size)
 }
 
 
 ## STEP 1: Original ----
 
-save_pairwise(plot_pairwise_original_main, paste0(output_path, "/step1_original_pairwise_main.pdf"))
+save_pairwise(plot_pairwise_original, paste0(output_path, "/step1_original_pairwise.pdf"))
 save_plot(plot_overall_original, paste0(output_path, "/step1_original_overall.pdf"),
           panel_width = 4.2, panel_height = 4.2)
 save_plot(plot_overall_original_bydrug, paste0(output_path, "/step1_original_overall_by_drug.pdf"),
@@ -1610,7 +1596,7 @@ save_plot(plot_loveplot(match_original), paste0(output_path, "/step1_original_lo
 
 ## STEP 2: Recalibration-in-the-large ----
 
-save_pairwise(plot_pairwise_recal_large_main, paste0(output_path, "/step2_recalibration_in_the_large_pairwise_main.pdf"))
+save_pairwise(plot_pairwise_recal_large, paste0(output_path, "/step2_recalibration_in_the_large_pairwise.pdf"))
 save_plot(plot_overall_recal_large, paste0(output_path, "/step2_recalibration_in_the_large_overall.pdf"),
           panel_width = 4.2, panel_height = 4.2)
 save_plot(plot_overall_recal_large_bydrug, paste0(output_path, "/step2_recalibration_in_the_large_overall_by_drug.pdf"),
@@ -1625,7 +1611,7 @@ save_plot(plot_loveplot(match_recal_large), paste0(output_path, "/step2_recalibr
 
 ## STEP 3: Recalibration ----
 
-save_pairwise(plot_pairwise_recal_main, paste0(output_path, "/step3_recalibration_pairwise_main.pdf"))
+save_pairwise(plot_pairwise_recal, paste0(output_path, "/step3_recalibration_pairwise.pdf"))
 save_plot(plot_overall_recal, paste0(output_path, "/step3_recalibration_overall.pdf"),
           panel_width = 4.2, panel_height = 4.2)
 save_plot(plot_overall_recal_bydrug, paste0(output_path, "/step3_recalibration_overall_by_drug.pdf"),
@@ -1642,25 +1628,25 @@ save_plot(plot_loveplot(match_recal), paste0(output_path, "/step3_recalibration_
 
 save_plot(plot_rank1_original_all, paste0(output_path, "/clinical_decision_rank1_original_all.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_rank1_original_available, paste0(output_path, "/clinical_decision_rank1_original_available.pdf"),
+if (make_available) save_plot(plot_rank1_original_available, paste0(output_path, "/clinical_decision_rank1_original_available.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
 
 save_plot(plot_rank1_recal_large_all, paste0(output_path, "/clinical_decision_rank1_recal_large_all.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_rank1_recal_large_available, paste0(output_path, "/clinical_decision_rank1_recal_large_available.pdf"),
+if (make_available) save_plot(plot_rank1_recal_large_available, paste0(output_path, "/clinical_decision_rank1_recal_large_available.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
 save_plot(plot_tolerance3_recal_large_all, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large_all.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_tolerance3_recal_large_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large_available.pdf"),
+if (make_available) save_plot(plot_tolerance3_recal_large_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large_available.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
 
 save_plot(plot_rank1_recal_all, paste0(output_path, "/clinical_decision_rank1_recal_all.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_rank1_recal_available, paste0(output_path, "/clinical_decision_rank1_recal_available.pdf"),
+if (make_available) save_plot(plot_rank1_recal_available, paste0(output_path, "/clinical_decision_rank1_recal_available.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
 save_plot(plot_tolerance3_recal_all, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_all.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_tolerance3_recal_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_available.pdf"),
+if (make_available) save_plot(plot_tolerance3_recal_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_available.pdf"),
           panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
 
 save_plot(plot_benefit_estimates, paste0(output_path, "/overall_benefit_estimates_by_model_version.pdf"),
