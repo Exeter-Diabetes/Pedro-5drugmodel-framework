@@ -1,30 +1,33 @@
-## This script demonstrates how to validate the 5-drug model in a new cohort
-##  and how to visualise calibration results
+## This script shows how to validate the 5-drug model in a new cohort and how to
+##  visualise the results.
 ##
-## Model version: v1, the published model (Dennis et al. Lancet 2025) for the
-##  5 drug classes.
+## Model version: v1, the published model (Dennis et al. Lancet 2025), for these
+##  drug classes: SGLT2i, GLP-1RA, DPP4i, SU, TZD
+##  The validation can be done for a subset of these drug classes (drugs_selected,
+##  Part 1). To validate the updated model (v2), use example_validation_script_v2.R
+##  instead.
 ##
-## Model predictions come from the online model calculator or from the model
-##  files (use_calculator, Step 0).
-#
-## There are several stages in this script:
-# 0) Settings
-# 1) Prepare your dataset with baseline features and outcomes
-#    a) Formatting continuous and categorical variables
-#    b) Creating a characteristics table
-#    c) Imputing missing data if needed, and choosing the drug classes analysed
-#    d) Writing the file to upload to the online calculator (calculator only)
-# 2) Obtain model predictions for each drug class
-#    a) Original predictions (online calculator or model files), made in each
-#       imputed dataset and averaged
-#    b) Recalibration-in-the-large
-#    c) Recalibration
-# 3) Perform calibration and clinical-decision analyses:
-#    a) Pairwise drug calibration
-#    b) Overall benefit calibration
-#    c) Predicted vs observed calibration
-#    d) Predicted optimal therapy (does recalibration change recommendations?)
-# 4) Save plots
+## Model predictions can be made using the online calculator or the model object
+##  (both available on request; use_calculator, Part 1).
+##
+## The script has five parts:
+## 1) Settings
+## 2) Prepare your data
+##    a) Format the variables
+##    b) Characteristics table
+##    c) Impute missing data and choose the drug classes analysed
+##    d) File for the online calculator (calculator only)
+## 3) Model predictions for each drug class, in three versions:
+##    a) original predictions
+##    b) recalibration-in-the-large (a drug-specific intercept)
+##    c) recalibration (a drug-specific intercept and slope)
+## 4) Figure code (needs to be run; no need to read it)
+## 5) Validation, done for each version of the predictions in turn, with every
+##    figure saved as it is made. The files sort in the same order:
+##      1_original_..., 2_recalibration_in_the_large_..., 3_recalibration_...,
+##    and within each, by figure: 01_pairwise, 02_overall, 03_overall_by_drug,
+##    04_loveplot, 05_pred_obs, 06_rank1, 07_tolerance3.
+##    Then the summaries (4_summary_...).
 
 
 #############################################################################
@@ -39,14 +42,14 @@ library(cateval) # Custom R package developed by Pedro for calibration evaluatio
 
 #############################################################################
 
-# Step 0: Settings ------------------------------------------------------------
+# Part 1: Settings ------------------------------------------------------------
 
-# How the model predictions are made (Step 2):
-#   TRUE:  with the online model calculator. Run the script twice: the first run
+# How the model predictions are made (Part 3):
+#   TRUE:  with the online calculator. Run the script twice: the first run
 #          writes the file to upload (calculator_upload_file) and stops. Upload it in
 #          the calculator's Validation Framework tab, save the file it returns as
 #          calculator_results_file, and run the script again.
-#   FALSE: from the model files, which need to be in the working directory.
+#   FALSE: from the model object, which needs to be in the working directory.
 use_calculator <- TRUE
 
 # where the outputs are saved
@@ -54,7 +57,7 @@ output_path <- "Outputs/Validation_Procedure"
 dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
 
 # files for the online calculator (only used when use_calculator is TRUE)
-calculator_upload_file  <- paste0(output_path, "/calculator_upload.csv") # written in Step 1d
+calculator_upload_file  <- paste0(output_path, "/calculator_upload.csv") # written in Part 2d
 calculator_results_file <- "calculator_predictions.csv"                   # returned by the calculator
 
 # The drug classes the model predicts (do not change these)
@@ -62,12 +65,12 @@ model_drugs <- c("SGLT2", "GLP1", "DPP4", "SU", "TZD")
 
 # The drug classes to analyse. You do not need initiations of every drug class: the
 # drug classes analysed are those of drugs_selected with initiations in your data
-# (drugs, set in Step 1c). To leave out a drug class, e.g. one with too few
-# initiations for stable estimates, remove it here, e.g.
+# (drugs, set in Part 2c). To leave out a drug class, e.g. one with too few
+# initiations, remove it here, e.g.
 #   drugs_selected <- c("SGLT2", "GLP1", "DPP4", "SU")
-# Its initiations are dropped after imputation (Step 1c), so they still help impute
+# Its initiations are dropped after imputation (Part 2c), so they still help impute
 # missing values. The model still predicts it (original predictions, not
-# recalibrated), so it can be the best drug class in the "all" outputs (Step 3).
+# recalibrated), so it can be the best drug class in the "all" figures (Part 5).
 drugs_selected <- model_drugs
 
 if (!all(drugs_selected %in% model_drugs)) {
@@ -86,15 +89,23 @@ drug_colours <- c("SGLT2" = "#E69F00", "GLP1" = "#56B4E9", "DPP4" = "#0072B2",
 
 #############################################################################
 
-# Step 1a: Prepare your dataset ------------------------------------------------
-# Note: This portion of code can be adapted based on your data source and structure
+# Part 2: Prepare your data ------------------------------------------------------
+
+# Part 2a: Format the variables ----
+# Note: This portion of code can be adapted based on your data source and structure.
+# The cohort (who is included, and how each variable is derived) is described in
+# the cohort description document (available on request). In short: new users of
+# one of the drug classes below, not on insulin, initiating only one
+# glucose-lowering drug class that day.
 
 # REQUIRED VARIABLES
 # Your dataset (analysis_dataset) must include the following variables for validation:
 #
 # OUTCOME VARIABLES:
-#   - posthba1cfinal: 12-month HbA1c outcome (numeric, mmol/mol)
-#   - hba1cmonth: Months from treatment initiation to outcome measurement (numeric, 3-15 months)
+#   - posthba1cfinal: outcome HbA1c (numeric, mmol/mol): the HbA1c closest to 12
+#     months after initiation (between 9 and 15 months) or, if there is none, the
+#     HbA1c closest to 6 months (between 3 and 9 months)
+#   - hba1cmonth: months from initiation to that outcome HbA1c (numeric, 3-15 months)
 #
 # TREATMENT VARIABLES:
 #   - drugclass: Drug class being initiated (categorical). Code the drug classes in
@@ -103,38 +114,45 @@ drug_colours <- c("SGLT2" = "#E69F00", "GLP1" = "#56B4E9", "DPP4" = "#0072B2",
 #     Initiations with any other value are dropped.
 #
 # BASELINE CHARACTERISTICS:
-#   - agetx: Age at treatment initiation (numeric, 18-79 years)
-#   - sex: Patient sex (categorical: "Male" or "Female")
-#   - t2dmduration: Duration of type 2 diabetes (numeric, 0-71 years)
-#   - prehba1c: Baseline HbA1c (numeric, 53-110 mmol/mol)
-#   - prebmi: Baseline BMI (numeric, 15-100 kg/m2)
-#   - preegfr: Baseline eGFR (numeric, 45-300 mL/min per 1.73 m2)
-#   - prealt: Baseline alanine aminotransferase (numeric, 0-200 U/L)
-#   - pretotalcholesterol: Baseline total cholesterol (numeric, 0.5-20 mmol/L)
-#   - prehdl: Baseline HDL cholesterol (numeric, 0.2-10 mmol/L)
-#   - ethnicity: Patient ethnicity (categorical)
-#     Valid values: "White", "South Asian", "Black", "Mixed", "Other", or "Missing"
-#   - smoke: Smoking status (categorical)
-#     Valid values: "Non-smoker", "Active smoker", "Ex-smoker", or "Not recorded"
-#   - ncurrtx: Number of current antihyperglycaemic drugs (categorical: "1", "2", "3", or "4+")
-#   - drugline: Number of previous drug classes tried (categorical: "2", "3", "4", or "5+")
+#   - agetx: age at initiation (numeric, 18-79 years)
+#   - sex: "Male" or "Female"
+#   - t2dmduration: duration of type 2 diabetes, from diagnosis to initiation
+#     (numeric, 0-71 years)
+#   - prehba1c: baseline HbA1c, closest to initiation within 6 months before to 7
+#     days after (numeric, 53-110 mmol/mol)
+#   The next five are the value closest to initiation within 2 years before to 7
+#   days after:
+#   - prebmi: BMI (numeric, 15-100 kg/m2)
+#   - preegfr: eGFR (numeric, 45-300 mL/min per 1.73 m2)
+#   - prealt: alanine aminotransferase (numeric, 0-200 U/L)
+#   - pretotalcholesterol: total cholesterol (numeric, 0.5-20 mmol/L)
+#   - prehdl: HDL cholesterol (numeric, 0.2-10 mmol/L)
+#   - ethnicity: "White", "South Asian", "Black", "Mixed", "Other" or "Missing"
+#   - smoke: smoking status, "Non-smoker", "Active smoker", "Ex-smoker" or
+#     "Not recorded"
+#   - ncurrtx: number of glucose-lowering drug classes being taken, including the
+#     one initiated ("1", "2", "3" or "4+")
+#   - drugline: number of glucose-lowering drug classes ever taken, including the
+#     one initiated ("2", "3", "4" or "5+")
 
 # The ranges above are the ones the online calculator accepts. Initiations outside
-# them are dropped after imputation (Step 1c), whichever way the predictions are made.
+# them are dropped after imputation (Part 2c), whichever way the predictions are made.
 valid_ranges <- list(
   agetx = c(18, 79), t2dmduration = c(0, 71), prehba1c = c(53, 110),
   prebmi = c(15, 100), preegfr = c(45, 300), prealt = c(0, 200),
   pretotalcholesterol = c(0.5, 20), prehdl = c(0.2, 10), hba1cmonth = c(3, 15)
 )
 
-# initiations with a drugclass value that is not one of model_drugs (dropped below)
+# Initiations whose drugclass is not one of the drug class names above are not
+# analysed: this prints how many there are of each value, to catch a drug class
+# coded with another name (e.g. "SGLT2i" or "GLP-1RA") before it is dropped below.
 analysis_dataset %>%
   filter(!(as.character(drugclass) %in% model_drugs)) %>%
   count(drugclass, name = "n_dropped") %>%
   print()
 
 
-# Caterogical variables must be properly formatted as factors with the specified levels.
+# Categorical variables must be properly formatted as factors with the specified levels.
 # Example formatting code:
 analysis_dataset <- analysis_dataset %>%
   mutate(
@@ -172,12 +190,14 @@ if (n_distinct(analysis_dataset$drugclass) < 2) {
 }
 
 
-# Step 1b: Create a characteristics table ---------------------------------
+# Part 2b: Characteristics table ----
 
 # This table describes the validation cohort at treatment initiation, stratified by
 # initiated drug class.
-# It includes baseline clinical characteristics, missingness indicators, outcome timing,
-# observed 12-month HbA1c, and observed response (posthba1cfinal - prehba1c).
+# It includes baseline clinical characteristics, missingness indicators, the timing
+# of the outcome, the outcome HbA1c (at 12 months, or at 6 months when the
+# 12-month value is missing; see Part 2a) and the observed response
+# (posthba1cfinal - prehba1c).
 
 
 # Add observed response and missingness indicators
@@ -250,18 +270,22 @@ characteristics_table_df <- print(
 
 write.csv(
   characteristics_table_df,
-  paste0(output_path, "/stage_1b_characteristics_by_drugclass.csv"),
+  paste0(output_path, "/characteristics_by_drugclass.csv"),
   row.names = TRUE
 )
 
 
-# Step 1c: Prepare your dataset ------------------------------------------------
+# Part 2c: Impute missing data and choose the drug classes analysed ----
 
-# Imputation of missing data can be performed using multiple imputation methods
-# The following code generates m=10 imputed datasets. The model predictions are made in
-# each imputed dataset and then averaged (Step 2). The imputed values are also averaged,
-# to create a single complete dataset with mean imputed values for originally missing
-# data, which gives the baseline characteristics used in the analyses (Step 3)
+# Missing baseline values are filled in by multiple imputation (mice):
+#   1. the incomplete dataset is imputed mice_m = 10 times, giving 10 complete
+#      datasets
+#   2. the model predictions are made in each of them and averaged (Part 3)
+#   3. the analyses (Part 5) also use the clinical features themselves: the
+#      pairwise calibration adjusts for them and the overall benefit calibration
+#      matches on them. For these, each missing value is replaced by its average
+#      over the 10 imputed datasets, giving one complete dataset (analysis_dataset).
+# The outcome (posthba1cfinal) is not imputed.
 
 # Example imputation code (using mice package):
 
@@ -314,7 +338,7 @@ for (var in vars_to_exclude) {
 analysis_dataset <- analysis_dataset_complete
 
 # Each imputed dataset, with the excluded variables added back, for the model
-# predictions (Step 2). These have the same rows, in the same order, as analysis_dataset.
+# predictions (Part 3). These have the same rows, in the same order, as analysis_dataset.
 imputed_list <- lapply(1:mice_m, function(i) {
   imputed <- complete(imputed_data, action = i)
   for (var in vars_to_exclude) {
@@ -330,7 +354,7 @@ keep <- !is.na(analysis_dataset$posthba1cfinal)
 analysis_dataset <- analysis_dataset[keep, ]
 imputed_list <- lapply(imputed_list, function(imputed) imputed[keep, ])
 
-# Initiations outside the accepted ranges (valid_ranges, Step 1a) in any of the
+# Initiations outside the accepted ranges (valid_ranges, Part 2a) in any of the
 # imputed datasets are dropped, so the same initiations are analysed whichever
 # way the predictions are made
 in_range <- Reduce(`&`, lapply(imputed_list, function(imputed) {
@@ -343,7 +367,7 @@ cat(sum(!in_range), "initiations outside the accepted ranges in at least one imp
 analysis_dataset <- analysis_dataset[in_range, ]
 imputed_list <- lapply(imputed_list, function(imputed) imputed[in_range, ])
 
-# Initiations of drug classes not in drugs_selected (Step 0) are dropped
+# Initiations of drug classes not in drugs_selected (Part 1) are dropped
 selected <- analysis_dataset$drugclass %in% drugs_selected
 cat(sum(!selected), "initiations of drug classes not in drugs_selected are dropped\n")
 analysis_dataset <- analysis_dataset[selected, ]
@@ -358,7 +382,7 @@ analysis_dataset <- analysis_dataset %>%
 drug_classes_analysed <- analysis_dataset %>%
   count(drugclass, name = "n_initiations")
 print(drug_classes_analysed)
-write.csv(drug_classes_analysed, paste0(output_path, "/stage_1c_drug_classes_analysed.csv"),
+write.csv(drug_classes_analysed, paste0(output_path, "/drug_classes_analysed.csv"),
           row.names = FALSE)
 
 if (length(drugs) < 2) {
@@ -367,13 +391,13 @@ if (length(drugs) < 2) {
 }
 
 
-# Step 1d: File for the online calculator ------------------------------------
+# Part 2d: File for the online calculator ------------------------------------
 
-# Only when the predictions come from the online calculator (use_calculator, Step 0).
+# Only when the predictions come from the online calculator (use_calculator, Part 1).
 # The file holds every imputed dataset, one after the other (imputation says which),
 # so it has mice_m rows per initiation, with numeric values rounded to 3 decimals. The calculator returns every column of this
 # file in the same order, with the predictions added, so row_id links them back to
-# these rows in Step 2.
+# these rows in Part 3.
 if (use_calculator) {
   calculator_upload <- bind_rows(lapply(1:mice_m, function(i) {
     imputed_list[[i]] %>% mutate(imputation = i)
@@ -399,7 +423,7 @@ if (use_calculator) {
 
 #############################################################################
 
-# Step 2: Model predictions ------------------------------------------------
+# Part 3: Model predictions ------------------------------------------------
 
 # The model predictions are one column for each drug class in model_drugs (absolute
 # values, not the change from baseline):
@@ -453,7 +477,7 @@ if (use_calculator) {
 
 } else {
 
-  ## Predictions from the model file, which needs to be in the working directory:
+  ## Predictions from the model object, which needs to be in the working directory:
   ##   - fivedrugmodel_5knot_share_20230823.Rdata: the 5-drug model (m1.5.final)
   ## These give the same predictions as the online calculator.
 
@@ -485,7 +509,7 @@ if (use_calculator) {
 ## and intercept + slope adjustments.
 
 ### Recalibration
-# drugs (Step 1c) and model_drugs (Step 0)
+# drugs (Part 2c) and model_drugs (Part 1)
 outcome_var <- "posthba1cfinal"
 pred_prefix <- "pred."
 
@@ -618,12 +642,9 @@ write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.c
 
 #############################################################################
 
-# ---- Saving figures ----
-# Every figure is saved at a size worked out from its contents: each panel gets
-# a fixed size in inches, and the file is exactly as large as the panels plus
-# their axes, strips, titles and legend. A figure therefore comes out the same
-# on any computer, with no white space around it and no text cut off (text is
-# measured with the pdf device's built-in font metrics, not the system fonts).
+# Part 4: Figure code ----------------------------------------------------------
+# This part only defines the functions that draw and save the figures. It needs
+# to be run, but there is no need to read it: nothing in it needs changing.
 
 # facet columns: one row for up to 4 panels, two rows above that
 facet_ncol <- function(n_panels) if (n_panels <= 4) n_panels else ceiling(n_panels / 2)
@@ -631,6 +652,95 @@ facet_ncol <- function(n_panels) if (n_panels <= 4) n_panels else ceiling(n_pane
 # number of categories on a discrete axis ("x" or "y") of a plot
 n_axis_levels <- function(plot, axis = "x") {
   length(ggplot2::ggplot_build(plot)$layout$panel_params[[1]][[axis]]$get_labels())
+}
+
+# how much the text grows in a figure whose panels are width inches wide in all
+width_scale <- function(width) max(1, 1 + 0.2 * (width / 3.4 - 1))
+
+# the largest font size (pt) at which every label fits on one line in width inches
+fit_font_size <- function(labels, width) {
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  widest <- max(vapply(as.character(labels), function(label) {
+    grid::convertWidth(grid::stringWidth(label), "in", valueOnly = TRUE)
+  }, numeric(1)))
+  # stringWidth is measured at the default 12 pt; width grows in proportion to size
+  12 * width / widest
+}
+
+# width (inches) of each label at size pt. ggplot writes negative numbers with
+# a minus sign, as wide as "+", not a hyphen.
+text_width <- function(labels, size) {
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  vapply(gsub("-", "+", as.character(labels)), function(label) {
+    grid::convertWidth(grid::stringWidth(label), "in", valueOnly = TRUE) * size / 12
+  }, numeric(1), USE.NAMES = FALSE)
+}
+
+# the largest axis title size (pt) at which label fits on one line along
+# length inches, between the 1-column size (16 pt) and 16 pt times text_scale
+axis_title_size <- function(label, text_scale, length) {
+  max(16, min(16 * text_scale, fit_font_size(label, length)))
+}
+
+# text wrapped onto as few lines as fit in width inches at size pt, never
+# inside a drug name; text already on several lines is wrapped line by line
+wrap_to_width <- function(text, size, width) {
+  if (grepl("\n", text)) {
+    return(paste(vapply(strsplit(text, "\n")[[1]], wrap_to_width, "", size = size, width = width),
+                 collapse = "\n"))
+  }
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  fits <- function(wrapped) {
+    all(vapply(strsplit(wrapped, "\n")[[1]], function(line) {
+      grid::convertWidth(grid::stringWidth(line), "in", valueOnly = TRUE) * size / 12 <= width
+    }, logical(1)))
+  }
+  # drug names that must not be split across lines are joined while wrapping
+  protected <- text
+  for (k in c("S.c. ", "Oral Semaglutide")) protected <- gsub(k, gsub(" ", "§", k), protected, fixed = TRUE)
+  restore <- function(x) gsub("§", " ", x, fixed = TRUE)
+  for (n_chars in seq(nchar(protected), 10)) {
+    wrapped <- restore(str_wrap(protected, n_chars))
+    if (fits(wrapped)) return(wrapped)
+  }
+  restore(str_wrap(protected, 10))
+}
+
+# a title ending in "(step)" split into the title and the step (capitalised),
+# so the step can go in the subtitle; step is NULL when there is none
+split_title_step <- function(title) {
+  step <- regmatches(title, regexec(" [(]([^()]*)[)]$", title))[[1]]
+  if (length(step) != 2) return(list(title = title, step = NULL))
+  list(title = sub(" [(][^()]*[)]$", "", title),
+       step  = paste0(toupper(substr(step[2], 1, 1)), substring(step[2], 2)))
+}
+
+# how far (inches) the outermost x axis numbers stick out past the left and
+# right edges of a panel panel_width inches wide, at size pt, for an axis
+# trained on the values x (expanded by ggplot's default 5% each side)
+x_overhang <- function(x, size, panel_width) {
+  lo <- min(x, na.rm = TRUE); hi <- max(x, na.rm = TRUE)
+  lo_e <- lo - 0.05 * (hi - lo); hi_e <- hi + 0.05 * (hi - lo)
+  breaks <- scales::extended_breaks()(c(lo, hi))
+  breaks <- breaks[breaks >= lo_e & breaks <= hi_e]
+  labels <- format(breaks, trim = TRUE)
+  w <- text_width(labels[c(1, length(labels))], size)
+  per_unit <- panel_width / (hi_e - lo_e)
+  c(left  = max(0, w[1] / 2 - (min(breaks) - lo_e) * per_unit),
+    right = max(0, w[2] / 2 - (hi_e - max(breaks)) * per_unit))
+}
+
+# the drug class names of one figure, given the drug classes it shows: with only
+# one semaglutide form in the figure, it is called "Semaglutide" (the figure
+# says which form); with both, they keep "Oral" / "S.c."
+figure_labels <- function(figure_drugs) {
+  labels <- drug_labels
+  sema   <- intersect(c("Oral_Semaglutide", "Inje_Semaglutide"), names(labels))
+  if (sum(sema %in% figure_drugs) == 1) labels[sema] <- "Semaglutide"
+  labels
 }
 
 # save a ggplot or patchwork with panels of panel_width x panel_height inches
@@ -690,23 +800,57 @@ save_plot <- function(plot, file, panel_width, panel_height) {
   invisible(grDevices::dev.off())
 }
 
-# helper: draw the pairwise calibration panels (one per pair of drug classes,
-# labelled by `title`), each square and on one symmetric range
+
+## Pairwise drug calibration figure ----
+
+# One square panel (3.4 inches) per pair of drug classes, labelled by `title`,
+# all on one symmetric range: observed against predicted benefit, one point per
+# group of predicted benefit, or a single point for a pooled pair. A trailing
+# "(step)" in the title goes in the subtitle.
 pairwise_plot <- function(plot_data, plot_title, plot_subtitle = NULL) {
-  # a trailing "(step)" in the title goes in the subtitle, so the title stays on one line
-  step <- regmatches(plot_title, regexec(" [(]([^()]*)[)]$", plot_title))[[1]]
-  if (is.null(plot_subtitle) && length(step) == 2) {
-    plot_title <- sub(" [(][^()]*[)]$", "", plot_title)
-    plot_subtitle <- paste0(toupper(substr(step[2], 1, 1)), substring(step[2], 2))
+  parts <- split_title_step(plot_title)
+  if (is.null(plot_subtitle)) plot_subtitle <- parts$step
+  plot_title <- parts$title
+  panel_size <- 3.4
+  n_panels   <- n_distinct(plot_data$title)
+  n_cols     <- facet_ncol(n_panels)
+  n_rows     <- ceiling(n_panels / n_cols)
+  text_scale <- 1 + 0.2 * (n_cols - 1)
+
+  # Facet titles: as large as the longest drug pair of this figure allows on one
+  # line within a panel, but no larger than the axis titles; on two lines
+  # ("Oral Semaglutide" / "vs SGLT2i") when one line would make them smaller
+  # than 75% of that
+  # panel titles in the order they first appear (a factor keeps its own order)
+  if (!is.factor(plot_data$title)) plot_data$title <- factor(plot_data$title, levels = unique(plot_data$title))
+  strip_size <- min(16 * text_scale, fit_font_size(levels(plot_data$title), panel_size - 0.25))
+  if (strip_size < 0.75 * 16 * text_scale) {
+    levels(plot_data$title) <- sub(" vs ", "\nvs ", levels(plot_data$title))
+    strip_size <- min(16 * text_scale,
+                      fit_font_size(unlist(strsplit(levels(plot_data$title), "\n")), panel_size - 0.25))
   }
-  n_panels <- n_distinct(plot_data$title)
+  title_width <- n_cols * panel_size + 0.8
+
+  # gap between panel columns: the outermost x axis numbers overhang the panel
+  # edges (the axis runs 10% beyond the data); the gap fits the overhang of the
+  # right number of one panel and the left number of the next, plus 0.12 inches
+  axis_text_size <- 15 * text_scale
+  lim       <- max(abs(c(plot_data$coef_low, plot_data$coef_high, plot_data$mean)), na.rm = TRUE)
+  axis_end  <- 1.1 * lim
+  breaks    <- scales::extended_breaks()(c(-lim, lim))
+  breaks    <- breaks[abs(breaks) <= axis_end]
+  edge_room <- (axis_end - max(abs(breaks))) / (2 * axis_end) * panel_size
+  overhang  <- pmax(0, text_width(format(range(breaks), trim = TRUE), axis_text_size) / 2 - edge_room)
+  panel_gap <- sum(overhang) + 0.12
+
   ggplot(plot_data, aes(x = mean, y = coef, ymin = coef_low, ymax = coef_high)) +
     geom_vline(aes(xintercept = 0), colour = "black", linetype = "dashed") +
     geom_hline(aes(yintercept = 0), colour = "black", linetype = "dashed") +
     geom_abline(aes(intercept = 0, slope = 1), colour = "red") +
-    geom_point(colour = "#800020") +
-    geom_errorbar(colour = "#800020") +
-    facet_wrap(~title, ncol = facet_ncol(n_panels)) +
+    # error bars without caps; points and error bars grow with the text
+    geom_errorbar(width = 0, colour = "#800020", linewidth = 0.5 * text_scale) +
+    geom_point(colour = "#800020", size = 1.8 * text_scale) +
+    facet_wrap(~title, ncol = n_cols) +
     # inject the predicted (mean) and observed-CI (coef_low/coef_high) values onto
     # both axes so x and y share one symmetric range; with coord_fixed this gives a
     # square panel of identical shape in every plot
@@ -718,31 +862,465 @@ pairwise_plot <- function(plot_data, plot_title, plot_subtitle = NULL) {
     scale_y_continuous(limits = function(x) c(-max(abs(x)), max(abs(x)))) +
     theme_classic() +
     theme(
-      axis.title = element_text(size = 16),
-      axis.text = element_text(size = 15),
-      strip.text = element_text(size = 14),
-      plot.title = element_text(size = 20),
-      plot.subtitle = element_text(size = 17),
+      # axis titles on one line along the height of the panels
+      axis.title = element_text(size = axis_title_size("Observed HbA1c benefit (mmol/mol)", text_scale,
+                                                       n_rows * (panel_size + 0.35))),
+      axis.text = element_text(size = axis_text_size),
+      # facet titles without a box
+      strip.text = element_text(size = strip_size),
+      strip.background = element_blank(),
+      plot.title = element_text(size = 20 * text_scale),
+      plot.subtitle = element_text(size = 17 * text_scale),
       plot.title.position = "plot",
-      panel.spacing.x = grid::unit(1.6, "lines"), panel.spacing.y = grid::unit(0.6, "lines")
+      panel.spacing.x = grid::unit(panel_gap, "in"), panel.spacing.y = grid::unit(0.6, "lines")
     ) +
     labs(
       x = expression("Predicted HbA"[1*c]*" benefit (mmol/mol)"),
       y = expression("Observed HbA"[1*c]*" benefit (mmol/mol)"),
-      # wrapped to about the width of the panels
-      title = str_wrap(plot_title, max(30, round(22 * facet_ncol(n_panels)))),
-      subtitle = plot_subtitle
+      # wrapped only where they are wider than the figure (panels plus the y axis)
+      title = wrap_to_width(plot_title, 20 * text_scale, title_width),
+      subtitle = if (!is.null(plot_subtitle)) wrap_to_width(plot_subtitle, 17 * text_scale, title_width)
     )
 }
 
-# side of the square pairwise panels, in inches: the same in every script, and
-# wide enough for the longest drug pair name on one line
-pairwise_panel_size <- 3.4
+# helper: save a pairwise figure (nothing is saved when it was not made)
+save_pairwise <- function(fig, file) {
+  if (!is.null(fig)) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
+}
+
+
+## Overall benefit calibration figures ----
+
+# Points are the mean observed benefit per group (from benefit_by_group() /
+# benefit_by_drug()), with a confidence interval, against the mean predicted
+# benefit. The dashed blue curve is a LOESS fit through these group point
+# estimates themselves (not the individual matched pairs), so the curve
+# summarises exactly the points shown, not the noisier patient-level data.
+# The `n` column from benefit_by_group() is the number of matched pairs in each
+# group, so its sum is the total number of pairs reported in the subtitle.
+# When several cal_groups settings are present (an n_groups column), the figure
+# shows the largest number of groups whose groups all contain at least `min_n`
+# matched pairs (or else the smallest number of groups); the number of groups is
+# not written, as the points show it.
+#   text_scale: how much the text, points and lines grow
+#   title_size, subtitle_size, axis_title_size: font sizes (pt)
+#   panel_width: if given, the plot gets room on its right for its outermost x
+#     axis number, so it does not run into the plot next to it
+plot_calibration <- function(deciles, title = NULL, min_n = 100, text_scale = 1,
+                             title_size = 20 * text_scale, subtitle_size = 17 * text_scale,
+                             axis_title_size = 16 * text_scale, panel_width = NULL) {
+  if ("n_groups" %in% names(deciles)) {
+    ok <- deciles %>%
+      group_by(n_groups) %>%
+      summarise(.min_group_n = min(n, na.rm = TRUE), .groups = "drop")
+    chosen <- if (any(ok$.min_group_n >= min_n)) {
+      max(ok$n_groups[ok$.min_group_n >= min_n])
+    } else {
+      min(ok$n_groups)
+    }
+    deciles <- deciles %>% filter(n_groups == chosen)
+  }
+
+  axis_text_size <- 15 * text_scale
+  # the x axis also covers 0 (the dashed vertical line)
+  right_margin <- if (!is.null(panel_width)) {
+    x_overhang(c(deciles$pred.benefit, 0), axis_text_size, panel_width)[["right"]] + 0.12
+  } else {
+    18 / 72
+  }
+
+  n_pairs <- sum(deciles$n, na.rm = TRUE)
+  ggplot(deciles, aes(x = pred.benefit, y = obs.benefit)) +
+    geom_abline(intercept = 0, slope = 1, colour = "red", linetype = "dashed") +
+    geom_hline(yintercept = 0, colour = "grey60", linetype = "dashed") +
+    geom_vline(xintercept = 0, colour = "grey60", linetype = "dashed") +
+    # LOESS only where there are more than 5 group points (in each drug class);
+    # through 5 or fewer its confidence band is unstable and can swamp the axis
+    geom_smooth(data = function(d) d %>% group_by(across(any_of("index_drug"))) %>% filter(n() > 5) %>% ungroup(),
+                method = "loess", formula = y ~ x, span = 1, se = TRUE, colour = "blue",
+                linetype = "dashed", linewidth = 0.75 * text_scale) +
+    # error bars without caps; points and error bars grow with the text
+    geom_errorbar(aes(ymin = lower.ci, ymax = upper.ci), width = 0, colour = "black",
+                  linewidth = 0.5 * text_scale) +
+    geom_point(size = 1.8 * text_scale) +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(colour = "black"),
+      axis.title = element_text(size = axis_title_size),
+      axis.text = element_text(size = axis_text_size),
+      plot.title = element_text(size = title_size),
+      plot.subtitle = element_text(size = subtitle_size),
+      plot.margin = margin(5.5, right_margin * 72, 5.5, 5.5, unit = "pt")
+    ) +
+    labs(
+      x = expression("Predicted HbA"[1*c]*" benefit (mmol/mol)"),
+      y = expression("Observed HbA"[1*c]*" benefit (mmol/mol)"),
+      title = title,
+      subtitle = paste0("n = ", format(n_pairs, big.mark = ","), " matched pairs")
+    )
+}
+
+# the concordant, discordant and combined matched pairs side by side (panels of
+# 4.2 inches), with one x and one y axis title for the three; a trailing
+# "(step)" in the title goes in the subtitle
+overall_figure <- function(deciles_conc, deciles_disc, deciles_both, title) {
+  panel_size <- 4.2
+  text_scale <- 1 + 0.2 * (3 - 1)
+
+  # panel titles: as large as the longest allows within a panel, but no larger
+  # than the axis titles; the numbers of pairs (subtitles) no larger than them
+  panel_titles <- c("Concordant matched to discordant", "Discordant matched to concordant", "Combined")
+  title_size   <- min(16 * text_scale, fit_font_size(panel_titles, panel_size - 0.25))
+  sizes <- list(text_scale = text_scale, title_size = title_size,
+                subtitle_size = min(15 * text_scale, title_size),
+                axis_title_size = axis_title_size("Observed HbA1c benefit (mmol/mol)", text_scale, panel_size),
+                panel_width = panel_size)
+  panel <- function(deciles, panel_title) do.call(plot_calibration, c(list(deciles, title = panel_title), sizes))
+
+  parts <- split_title_step(title)
+  panel(deciles_conc, panel_titles[1]) +
+    panel(deciles_disc, panel_titles[2]) +
+    panel(deciles_both, panel_titles[3]) +
+    patchwork::plot_layout(nrow = 1, axis_titles = "collect") +
+    patchwork::plot_annotation(
+      title = wrap_to_width(parts$title, 20 * text_scale, 3 * panel_size + 1.5),
+      subtitle = parts$step,
+      theme = theme(plot.title = element_text(size = 20 * text_scale),
+                    plot.subtitle = element_text(size = 17 * text_scale))
+    )
+}
+
+# same plot, one panel (3.4 inches) per drug class that anchors the pairs (the
+# index / matched patient's drug); the LOESS curve is fitted separately within
+# each panel, from that drug's own group points. Each facet title is the drug
+# class and its number of matched pairs, summing the per-group `n` returned by
+# benefit_by_drug(). The number of groups is chosen per drug class.
+plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
+  if ("n_groups" %in% names(by_drug)) {
+    by_drug <- by_drug %>%
+      group_by(index_drug, n_groups) %>%
+      mutate(.min_group_n = min(n, na.rm = TRUE)) %>%
+      group_by(index_drug) %>%
+      mutate(.chosen_groups = if (any(.min_group_n >= min_n)) {
+        max(n_groups[.min_group_n >= min_n])
+      } else {
+        min(n_groups)
+      }) %>%
+      ungroup() %>%
+      filter(n_groups == .chosen_groups) %>%
+      select(-.min_group_n, -.chosen_groups, -n_groups)
+  }
+
+  panel_size <- 3.4
+  panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
+  n_panels   <- length(panel_drugs)
+  n_cols     <- facet_ncol(n_panels)
+  n_rows     <- ceiling(n_panels / n_cols)
+  text_scale <- 1 + 0.2 * (n_cols - 1)
+
+  # Facet titles: the drug class (named as in this figure) over its number of
+  # matched pairs; as large as the longest line allows within a panel, but no
+  # larger than the axis titles
+  labels <- figure_labels(panel_drugs)
+  facet_counts <- by_drug %>%
+    group_by(index_drug) %>%
+    summarise(n_pairs = sum(n, na.rm = TRUE), .groups = "drop")
+  facet_labels <- setNames(
+    paste0(labels[as.character(facet_counts$index_drug)],
+           "\n(n = ", format(facet_counts$n_pairs, big.mark = ",", trim = TRUE), ")"),
+    as.character(facet_counts$index_drug)
+  )
+  strip_size <- min(16 * text_scale, fit_font_size(unlist(strsplit(facet_labels, "\n")), panel_size - 0.25))
+
+  # gap between panel columns for the outermost x axis numbers (the same axis in
+  # every panel), plus 0.12 inches
+  overhang  <- x_overhang(c(by_drug$pred.benefit, 0), 15 * text_scale, panel_size)
+  panel_gap <- sum(overhang) + 0.12
+
+  # the step goes in the subtitle, before the number of matched pairs
+  parts <- split_title_step(title)
+  subtitle <- paste0(if (!is.null(parts$step)) paste0(parts$step, "; "),
+                     "n = ", format(sum(by_drug$n, na.rm = TRUE), big.mark = ","), " matched pairs")
+  title_width <- n_cols * panel_size + 0.8
+
+  plot_calibration(by_drug, text_scale = text_scale,
+                   axis_title_size = axis_title_size("Observed HbA1c benefit (mmol/mol)", text_scale,
+                                                     n_rows * (panel_size + 0.6))) +
+    facet_wrap(~ index_drug, ncol = n_cols, labeller = labeller(index_drug = facet_labels)) +
+    theme(
+      # facet titles without a box
+      strip.text = element_text(size = strip_size),
+      strip.background = element_blank(),
+      panel.spacing.x = grid::unit(panel_gap, "in"),
+      plot.title.position = "plot"
+    ) +
+    labs(title = wrap_to_width(parts$title, 20 * text_scale, title_width),
+         subtitle = wrap_to_width(subtitle, 17 * text_scale, title_width))
+}
+
+# helpers: save the overall benefit figures
+save_overall <- function(fig, file) save_plot(fig, file, panel_width = 4.2, panel_height = 4.2)
+save_overall_by_drug <- function(fig, file) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
+
+
+## Predicted vs observed figure ----
+
+# One point per initiation: the observed HbA1c (at 12 months, or at 6 months when
+# the 12-month value is missing) against the prediction for the drug class
+# initiated; all in one panel (5.5 x 4.2 inches), or one panel per drug class
+# (by_drug, 3.6 inches). pred_obs_data has one row per initiation: drugclass,
+# pred_drug and posthba1cfinal. limits: list(x = , y = ) of the axis ranges,
+# the same for every predicted vs observed figure of the script
+# (pred_obs_limits()), so the figures of the three steps can be compared.
+draw_pred_obs <- function(pred_obs_data, pred_drugs, title, step_title, by_drug = FALSE,
+                          limits = pred_obs_limits(list(pred_obs_data))) {
+  if (length(pred_drugs) == 0) return(NULL)
+
+  panel_width  <- if (by_drug) 3.6 else 5.5
+  panel_height <- if (by_drug) 3.6 else 4.2
+  n_cols <- if (by_drug) facet_ncol(length(pred_drugs)) else 1
+  n_rows <- if (by_drug) ceiling(length(pred_drugs) / n_cols) else 1
+  text_scale <- if (by_drug) 1 + 0.2 * (n_cols - 1) else width_scale(panel_width)
+  axis_text_size <- 15 * text_scale
+
+  # Facet titles: the drug class (named as in this figure) and its number of
+  # initiations, as large as the longest allows within a panel but no larger
+  # than the axis titles; on two lines ("Drug" / "(n = ...)") when one line
+  # would make them smaller than 75% of that
+  labels <- figure_labels(pred_drugs)
+  n_text <- format(as.integer(table(factor(pred_obs_data$drugclass, levels = pred_drugs))), big.mark = ",", trim = TRUE)
+  panel_labels <- setNames(paste0(labels[pred_drugs], " (n = ", n_text, ")"), pred_drugs)
+  strip_size <- min(16 * text_scale, fit_font_size(panel_labels, panel_width - 0.25))
+  if (strip_size < 0.75 * 16 * text_scale) {
+    panel_labels <- setNames(paste0(labels[pred_drugs], "\n(n = ", n_text, ")"), pred_drugs)
+    strip_size <- min(16 * text_scale, fit_font_size(unlist(strsplit(panel_labels, "\n")), panel_width - 0.25))
+  }
+  pred_obs_data$panel <- factor(panel_labels[as.character(pred_obs_data$drugclass)], levels = panel_labels)
+
+  # room between panels, and on the right, for the outermost x axis numbers
+  overhang  <- x_overhang(limits$x, axis_text_size, panel_width)
+  panel_gap <- sum(overhang) + 0.12
+  title_width <- n_cols * panel_width + 0.8
+
+  ggplot(pred_obs_data, aes(x = pred_drug, y = posthba1cfinal)) +
+    geom_abline(aes(intercept = 0, slope = 1), colour = "green") +
+    # points and the fitted curve grow with the text
+    geom_point(alpha = 0.4, size = 1.2 * text_scale) +
+    geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE, linewidth = 1 * text_scale) +
+    { if (by_drug) facet_wrap(~ panel, ncol = n_cols) } +
+    # the same axes in every predicted vs observed figure (zooms only: no point
+    # or curve is dropped)
+    coord_cartesian(xlim = limits$x, ylim = limits$y) +
+    theme_classic() +
+    theme(
+      # axis titles on one line along the height of the panels
+      axis.title = element_text(size = axis_title_size("Observed HbA1c (mmol/mol)", text_scale,
+                                                       n_rows * (panel_height + 0.4))),
+      axis.text = element_text(size = axis_text_size),
+      # facet titles without a box
+      strip.text = element_text(size = strip_size),
+      strip.background = element_blank(),
+      plot.title = element_text(size = 20 * text_scale),
+      plot.subtitle = element_text(size = 17 * text_scale),
+      plot.title.position = "plot",
+      panel.spacing.x = grid::unit(panel_gap, "in"),
+      plot.margin = margin(5.5, (overhang[["right"]] + 0.12) * 72, 5.5, 5.5, unit = "pt")
+    ) +
+    labs(
+      x = expression("Predicted HbA"[1*c]*" (mmol/mol)"),
+      y = expression("Observed HbA"[1*c]*" (mmol/mol)"),
+      title = wrap_to_width(title, 20 * text_scale, title_width),
+      subtitle = wrap_to_width(paste0(step_title, "; n = ", format(nrow(pred_obs_data), big.mark = ","), " initiations"),
+                               17 * text_scale, title_width)
+    )
+}
+
+# helper: the axis ranges covering every data frame in data_list (each with
+# pred_drug and posthba1cfinal)
+pred_obs_limits <- function(data_list) {
+  all <- bind_rows(lapply(data_list, function(d) d[, c("pred_drug", "posthba1cfinal")]))
+  list(x = range(all$pred_drug, na.rm = TRUE), y = range(all$posthba1cfinal, na.rm = TRUE))
+}
+
+# helper: save a predicted vs observed figure (nothing is saved when it was not made)
+save_pred_obs <- function(fig, file, by_drug = FALSE) {
+  if (!is.null(fig)) save_plot(fig, file, panel_width  = if (by_drug) 3.6 else 5.5,
+                                          panel_height = if (by_drug) 3.6 else 4.2)
+}
+
+
+## Predicted optimal therapy figures ----
+
+# width (inches) of a bar chart: 1.25 inches per bar, at least 3
+bar_panel_width <- function(n_bars) max(3, 1.25 * n_bars)
+
+# Distribution of the predicted best drug class (rank 1): vertical bars, largest
+# first, without outlines on plain axes, with the percentage above each bar and
+# the number of initiations under it in grey. rank1_breakdown has one row per
+# drug class that is best for anyone: drug, n, proportion. analysis_drugs: the
+# drug classes the best is chosen from (for their names in this figure).
+draw_rank1 <- function(rank1_breakdown, plot_subtitle, analysis_drugs = rank1_breakdown$drug) {
+  width      <- bar_panel_width(nrow(rank1_breakdown))
+  text_scale <- width_scale(width)
+  axis_text_size <- 15 * text_scale
+  labels <- figure_labels(analysis_drugs)
+
+  rank1_breakdown %>%
+    mutate(drug = factor(drug, levels = drug[order(-n)]),
+           pct_label = sprintf("%.1f%%", proportion),
+           n_label   = paste0("n = ", format(n, big.mark = ",", trim = TRUE))) %>%
+    ggplot(aes(x = drug, y = proportion, fill = drug)) +
+    geom_col(width = 0.7) +
+    # number of initiations (grey, smaller) just above the bar, percentage above it
+    geom_text(aes(label = n_label), vjust = -0.5, size = 0.8 * axis_text_size / .pt, colour = "grey40") +
+    geom_text(aes(label = pct_label), vjust = -1.75, size = axis_text_size / .pt, fontface = "bold") +
+    scale_fill_manual(values = drug_colours, guide = "none") +
+    # drug class names wrapped to the width of a bar, never inside a drug name
+    scale_x_discrete(labels = function(x) vapply(labels[x], wrap_to_width, "", size = axis_text_size, width = 1.15)) +
+    scale_y_continuous(limits = c(0, max(rank1_breakdown$proportion) * 1.3), expand = expansion(mult = c(0, 0)),
+                       breaks = function(lim) { b <- pretty(lim); b[b <= 100] }) +
+    theme_classic() +
+    theme(
+      axis.title = element_text(size = 16 * text_scale),
+      axis.text = element_text(size = axis_text_size, colour = "black"),
+      # drug class names a little below the axis line
+      axis.text.x = element_text(margin = margin(t = 8 * text_scale)),
+      axis.ticks.x = element_blank(),
+      plot.title = element_text(size = 20 * text_scale),
+      plot.subtitle = element_text(size = 17 * text_scale),
+      plot.title.position = "plot"
+    ) +
+    labs(
+      x = NULL,
+      y = "Initiations (%)",
+      title = wrap_to_width("Predicted best drug class", 20 * text_scale, width + 0.8),
+      subtitle = wrap_to_width(plot_subtitle, 17 * text_scale, width + 0.8)
+    )
+}
+
+# Drug classes added to and removed from the tolerance-3 sets by recalibration.
+# changes has one row per change type ("added", "removed") and drug class:
+# change_type, drug, n; n_total is the number of patients (for the percentage
+# axis). analysis_drugs: the drug classes the sets are chosen from.
+draw_tolerance3 <- function(changes, n_total, plot_subtitle, analysis_drugs = unique(changes$drug)) {
+  width      <- bar_panel_width(n_distinct(changes$drug))
+  text_scale <- width_scale(width)
+  axis_text_size <- 15 * text_scale
+  labels <- figure_labels(analysis_drugs)
+
+  changes %>%
+    mutate(
+      drug = factor(drug, levels = intersect(model_drugs, drug)),
+      signed_n = ifelse(change_type == "removed", -n, n)
+    ) %>%
+    ggplot(aes(x = drug, y = signed_n, fill = drug, alpha = change_type)) +
+    geom_hline(yintercept = 0, colour = "grey40", linetype = "dashed") +
+    geom_col(width = 0.7, colour = "black", linewidth = 0.2) +
+    scale_fill_manual(values = drug_colours, guide = "none") +
+    scale_alpha_manual(values = c("added" = 1, "removed" = 0.6)) +
+    # drug class names wrapped to the width of a bar, never inside a drug name
+    scale_x_discrete(labels = function(x) vapply(labels[x], wrap_to_width, "", size = axis_text_size, width = 1.15)) +
+    scale_y_continuous(
+      name = "Net count (n)",
+      labels = scales::comma,
+      sec.axis = sec_axis(
+        ~ . * 100 / n_total,
+        name = "Net percentage (%)",
+        labels = function(x) sprintf("%.1f", x)
+      )
+    ) +
+    theme_classic() +
+    theme(
+      axis.title = element_text(size = 16 * text_scale),
+      axis.text = element_text(size = axis_text_size),
+      plot.title = element_text(size = 20 * text_scale),
+      plot.subtitle = element_text(size = 17 * text_scale),
+      plot.title.position = "plot",
+      legend.position = "bottom",
+      legend.title = element_text(size = 16 * text_scale),
+      legend.text = element_text(size = axis_text_size)
+    ) +
+    labs(
+      x = "Drug Class",
+      title = wrap_to_width("Tolerance-3 drug changes", 20 * text_scale, width + 1.6),
+      subtitle = wrap_to_width(plot_subtitle, 17 * text_scale, width + 1.6),
+      alpha = "Change"
+    )
+}
+
+# helper: save a predicted optimal therapy figure (each bar gets the same room)
+save_decision <- function(fig, file) {
+  if (!is.null(fig)) save_plot(fig, file, panel_width = function(p) bar_panel_width(n_axis_levels(p)), panel_height = 3.6)
+}
+
+
+## Overall benefit estimates figure ----
+
+# The overall benefit estimates (rows with key_result) in the three steps, one
+# panel (5.5 x 1.6 inches) per analysis: observed, lower.ci, upper.ci, model
+# (step) and analysis_label.
+draw_benefit_estimates <- function(benefit_estimates, plot_subtitle = NULL,
+                                   plot_title = "Overall benefit estimates") {
+  panel_width <- 5.5
+  text_scale  <- width_scale(panel_width)
+  # first letter in capitals, the rest as written ("S.c. Semaglutide" stays)
+  capitalise <- function(x) paste0(toupper(substr(x, 1, 1)), substring(x, 2))
+  benefit_estimates <- benefit_estimates %>%
+    filter(key_result) %>%
+    mutate(
+      model = factor(model, levels = c("Recalibration", "Recalibration-in-the-large", "Original")),
+      analysis_label = capitalise(as.character(analysis_label)),
+      analysis_label = factor(analysis_label, levels = unique(analysis_label))
+    )
+
+  # facet titles: as large as the longest allows within the panel, but no
+  # larger than the axis titles
+  strip_size  <- min(16 * text_scale, fit_font_size(levels(benefit_estimates$analysis_label), panel_width - 0.25))
+  # titles can take the panel plus the step names on the left
+  title_width <- panel_width + 2.6
+
+  ggplot(benefit_estimates, aes(x = observed, xmin = lower.ci, xmax = upper.ci, y = model, colour = model)) +
+    geom_vline(xintercept = 0, linetype = "dashed", colour = "grey40") +
+    # points and lines grow with the text
+    geom_pointrange(size = 0.7 * text_scale, linewidth = 0.5 * text_scale) +
+    facet_wrap(~ analysis_label, ncol = 1) +
+    theme_classic() +
+    theme(
+      legend.position = "none",
+      axis.title = element_text(size = 16 * text_scale),
+      axis.text = element_text(size = 15 * text_scale),
+      # facet titles without a box
+      strip.text = element_text(size = strip_size),
+      strip.background = element_blank(),
+      plot.title = element_text(size = 20 * text_scale),
+      plot.subtitle = element_text(size = 17 * text_scale),
+      plot.title.position = "plot"
+    ) +
+    labs(
+      x = expression("Observed HbA"[1*c]*" benefit estimate (mmol/mol)"),
+      y = NULL,
+      title = wrap_to_width(plot_title, 20 * text_scale, title_width),
+      subtitle = if (!is.null(plot_subtitle)) wrap_to_width(plot_subtitle, 17 * text_scale, title_width)
+    )
+}
+
+# helper: save the overall benefit estimates figure
+save_benefit_estimates <- function(fig, file) save_plot(fig, file, panel_width = 5.5, panel_height = 1.6)
 
 
 #############################################################################
 
-# Step 3: Evaluate performance ----------------------------------------------
+# Part 5: Validation -----------------------------------------------------------
+
+## The validation is done for each version of the predictions in turn (Parts
+## 5.1 to 5.3), and then summarised (Part 5.4). Below, the analyses are set up
+## and the code for each kind of figure is defined; Parts 5.1 to 5.4 run them.
+##
+## The prognostic factor (prognostic_vars) is a cross-cutting control applied
+## within every version when identified - adjusted for in the pairwise analysis
+## and matched on in the overall-benefit analysis - not a version of its own.
 
 ## Pairwise drug calibration ----
 
@@ -788,48 +1366,19 @@ plot_pairwise <- function(pairwise_results, plot_title, plot_subtitle) {
     pairwise_plot(plot_title, plot_subtitle)
 }
 
-### Original predictions
-pairwise_results_original <- cateval::pairwise_calibration(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  drugs = drugs,
-  prediction_vars = paste0("pred.", drugs),
-  outcome_var = outcome_var,
-  cal_groups = cal_groups,
-  adjustment_var = unique(c(adjustment_vars, prognostic_vars))
-)
-
-plot_pairwise_original <- plot_pairwise(pairwise_results_original,
-  "Pairwise Drug Calibration", "Original predictions")
-
-### Recalibration-in-the-large predictions
-pairwise_results_recal_large <- cateval::pairwise_calibration(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  drugs = drugs,
-  prediction_vars = paste0("pred.recal_large.", drugs),
-  outcome_var = outcome_var,
-  cal_groups = cal_groups,
-  adjustment_var = unique(c(adjustment_vars, prognostic_vars))
-)
-
-plot_pairwise_recal_large <- plot_pairwise(pairwise_results_recal_large,
-  "Pairwise Drug Calibration", "Recalibration-in-the-large")
-
-### Recalibration predictions
-pairwise_results_recal <- cateval::pairwise_calibration(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  drugs = drugs,
-  prediction_vars = paste0("pred.recal.", drugs),
-  outcome_var = outcome_var,
-  cal_groups = cal_groups,
-  adjustment_var = unique(c(adjustment_vars, prognostic_vars))
-)
-
-plot_pairwise_recal <- plot_pairwise(pairwise_results_recal,
-  "Pairwise Drug Calibration", "Recalibration")
-
+# helper: pairwise calibration of every pair of the drug classes analysed, with the
+# predictions with the given prefix
+pairwise_results_of <- function(prefix) {
+  cateval::pairwise_calibration(
+    data = analysis_dataset,
+    drug_var = "drugclass",
+    drugs = drugs,
+    prediction_vars = paste0(prefix, drugs),
+    outcome_var = outcome_var,
+    cal_groups = cal_groups,
+    adjustment_var = unique(c(adjustment_vars, prognostic_vars))
+  )
+}
 
 
 ## Overall benefit calibration ----
@@ -861,8 +1410,8 @@ matching_vars <- c(
   "sex", "smoke", "ncurrtx", "drugline"
 )
 # The same covariates plus any prognostic factors in prognostic_vars. Used for
-# matching in every overall-benefit step (the prognostic factor is a cross-cutting
-# control, not a step of its own); equal to matching_vars until you populate
+# matching in every version of the predictions (the prognostic factor is a
+# cross-cutting control, not a version of its own); equal to matching_vars until you populate
 # prognostic_vars.
 matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
 
@@ -872,110 +1421,6 @@ matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
 use_bootstrap <- FALSE
 n_boot <- 1000
 boot_seed <- 42
-
-# ---- Local plotting helpers ----
-# Points are the mean observed benefit per group (from benefit_by_group() /
-# benefit_by_drug()), with a confidence interval, against the mean predicted
-# benefit. The dashed blue curve is a LOESS fit through these group point
-# estimates themselves (not the individual matched pairs), so the curve
-# summarises exactly the points shown, not the noisier patient-level data.
-# The `n` column from benefit_by_group() is the number of matched pairs in each
-# group, so its sum is the total number of pairs reported in the subtitle.
-plot_calibration <- function(deciles, title = NULL, min_n = 100) {
-  # When several cal_groups settings are present (an n_groups column from
-  # benefit_by_group()), show the largest n_groups whose groups all contain at
-  # least `min_n` matched pairs; if none does, fall back to the smallest n_groups.
-  groups_label <- ""
-  if ("n_groups" %in% names(deciles)) {
-    ok <- deciles %>%
-      group_by(n_groups) %>%
-      summarise(.min_group_n = min(n, na.rm = TRUE), .groups = "drop")
-    chosen <- if (any(ok$.min_group_n >= min_n)) {
-      max(ok$n_groups[ok$.min_group_n >= min_n])
-    } else {
-      min(ok$n_groups)
-    }
-    deciles <- deciles %>% filter(n_groups == chosen)
-    groups_label <- paste0(", ", chosen, ifelse(chosen == 1, " group", " groups"))
-  }
-
-  n_pairs <- sum(deciles$n, na.rm = TRUE)
-  ggplot(deciles, aes(x = pred.benefit, y = obs.benefit)) +
-    geom_abline(intercept = 0, slope = 1, colour = "red", linetype = "dashed") +
-    geom_hline(yintercept = 0, colour = "grey60", linetype = "dashed") +
-    geom_vline(xintercept = 0, colour = "grey60", linetype = "dashed") +
-    # LOESS only where there are more than 5 group points (in each drug class);
-    # through 5 or fewer its confidence band is unstable and can swamp the axis
-    geom_smooth(data = function(d) d %>% group_by(across(any_of("index_drug"))) %>% filter(n() > 5) %>% ungroup(),
-                method = "loess", span = 1, se = TRUE, colour = "blue", linetype = "dashed", linewidth = 0.75) +
-    geom_errorbar(aes(ymin = lower.ci, ymax = upper.ci), width = 0.2, colour = "black") +
-    geom_point(size = 2.5) +
-    theme_bw() +
-    theme(
-      panel.grid.major = element_blank(),
-      panel.grid.minor = element_blank(),
-      axis.line = element_line(colour = "black"),
-      axis.title = element_text(size = 18),
-      axis.text = element_text(size = 16),
-      plot.title = element_text(size = 20),
-      plot.subtitle = element_text(size = 17)
-    ) +
-    labs(
-      x = expression("Predicted HbA"[1*c]*" benefit (mmol/mol)"),
-      y = expression("Observed HbA"[1*c]*" benefit (mmol/mol)"),
-      title = title,
-      subtitle = paste0("n = ", format(n_pairs, big.mark = ","), " matched pairs", groups_label)
-    )
-}
-
-# same plot, faceted by the drug class that anchors each pair (the index /
-# matched patient's drug); the LOESS curve is fitted separately within each
-# facet, from that drug's own group points. Each facet strip is labelled with
-# the number of matched pairs (index-drug initiations) for that drug class,
-# summing the per-group `n` returned by benefit_by_drug().
-plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
-  # When several cal_groups settings are present (an n_groups column from
-  # benefit_by_drug()), choose PER DRUG the largest n_groups whose groups all
-  # contain at least `min_n` matched pairs. If even the coarsest grouping has a
-  # group below min_n, fall back to that drug's smallest n_groups (fewest groups,
-  # hence the largest per-group n).
-  if ("n_groups" %in% names(by_drug)) {
-    by_drug <- by_drug %>%
-      group_by(index_drug, n_groups) %>%
-      mutate(.min_group_n = min(n, na.rm = TRUE)) %>%
-      group_by(index_drug) %>%
-      mutate(.chosen_groups = if (any(.min_group_n >= min_n)) {
-        max(n_groups[.min_group_n >= min_n])
-      } else {
-        min(n_groups)
-      }) %>%
-      ungroup() %>%
-      filter(n_groups == .chosen_groups) %>%
-      select(-.min_group_n, -.chosen_groups)
-  }
-
-  # Facet strip: number of matched pairs and the number of groups actually shown
-  # for that drug (these can now differ between drug classes).
-  facet_counts <- by_drug %>%
-    group_by(index_drug) %>%
-    summarise(n_pairs = sum(n, na.rm = TRUE), n_shown = dplyr::n(), .groups = "drop")
-  facet_labels <- setNames(
-    paste0(recode(as.character(facet_counts$index_drug), !!!drug_labels),
-           "\n(n = ", format(facet_counts$n_pairs, big.mark = ",", trim = TRUE),
-           ", ", facet_counts$n_shown, ifelse(facet_counts$n_shown == 1, " group)", " groups)")),
-    as.character(facet_counts$index_drug)
-  )
-  # n_groups is dropped so plot_calibration() does not re-select across drugs
-  plot_calibration(by_drug %>% select(-n_groups), title = title) +
-    facet_wrap(~ index_drug, ncol = facet_ncol(nrow(facet_counts)), labeller = labeller(index_drug = facet_labels)) +
-    theme(
-      axis.title = element_text(size = 18),
-      axis.text = element_text(size = 16),
-      strip.text = element_text(size = 16),
-      # room between panels so neighbouring x axis labels do not touch
-      panel.spacing.x = grid::unit(2.2, "lines")
-    )
-}
 
 # Covariate names as they should read in the love plots (plotmath, so units
 # keep their superscripts and subscripts)
@@ -1004,7 +1449,7 @@ love_labels <- c(
   "drugline5+"          = "'Number of previous glucose-lowering drugs = >4'"
 )
 
-# Balance (love) plot for one matching step: absolute standardised mean
+# Balance (love) plot of one matching: absolute standardised mean
 # difference per matching covariate, before and after matching, in each
 # matching direction. Exact-matched variables are left out.
 plot_loveplot <- function(match_obj) {
@@ -1086,217 +1531,76 @@ plot_loveplot <- function(match_obj) {
 }
 
 
-### Original predictions ----
+# helper: overall benefit calibration of the drug classes analysed, with the
+# predictions with the given prefix. Returns the matched pairs (and matchit
+# objects, for the love plot), the mean observed benefit of following the model,
+# the calibration slope / intercept and the figures.
+overall_benefit <- function(prefix, step_title) {
 
-# match concordant vs discordant patients (returns the concordant, discordant
-# and combined matched populations, plus the matchit objects for love plots).
-# The matching can be changed for each step separately, e.g. if its love plot
-# shows poor balance.
-match_original <- cateval::match_benefit_pairs(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  outcome_var = outcome_var,
-  pred_cols = paste0("pred.", drugs),
-  matching_var = matching_vars_prog,
-  caliper = c(prehba1c = 0.4),
-  seed = 19840503
-)
-
-# group the matched pairs by predicted benefit (each cal_groups setting), for each population
-deciles_original_conc <- cateval::benefit_by_group(match_original$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_original_disc <- cateval::benefit_by_group(match_original$discordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_original_both <- cateval::benefit_by_group(match_original$combined,   cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-# mean observed benefit of following the model, and calibration slope / intercept
-overall_original     <- cateval::benefit_overall(match_original$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_original <- cateval::benefit_citl_slope(match_original$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-# calibration plot for each matched population, then the three side by side
-plot_original_conc <- plot_calibration(deciles_original_conc, title = "Concordant matched to discordant")
-plot_original_disc <- plot_calibration(deciles_original_disc, title = "Discordant matched to concordant")
-plot_original_both <- plot_calibration(deciles_original_both, title = "Combined")
-
-plot_overall_original <- plot_original_conc + plot_original_disc + plot_original_both +
-  patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (original predictions)", theme = theme(plot.title = element_text(size = 20)))
-
-# calibration split by drug class (one panel per drug class analysed)
-by_drug_original <- cateval::benefit_by_drug(match_original$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_original_bydrug <- plot_calibration_by_drug(by_drug_original, title = "Overall Benefit Calibration by drug class (original predictions)")
-
-
-### Recalibration-in-the-large predictions ----
-
-match_recal_large <- cateval::match_benefit_pairs(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  outcome_var = outcome_var,
-  pred_cols = paste0("pred.recal_large.", drugs),
-  matching_var = matching_vars_prog,
-  caliper = c(prehba1c = 0.4),
-  seed = 19840503
-)
-
-deciles_recal_large_conc <- cateval::benefit_by_group(match_recal_large$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_recal_large_disc <- cateval::benefit_by_group(match_recal_large$discordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_recal_large_both <- cateval::benefit_by_group(match_recal_large$combined,   cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-overall_recal_large     <- cateval::benefit_overall(match_recal_large$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_recal_large <- cateval::benefit_citl_slope(match_recal_large$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-plot_recal_large_conc <- plot_calibration(deciles_recal_large_conc, title = "Concordant matched to discordant")
-plot_recal_large_disc <- plot_calibration(deciles_recal_large_disc, title = "Discordant matched to concordant")
-plot_recal_large_both <- plot_calibration(deciles_recal_large_both, title = "Combined")
-
-plot_overall_recal_large <- plot_recal_large_conc + plot_recal_large_disc + plot_recal_large_both +
-  patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (recalibration-in-the-large)", theme = theme(plot.title = element_text(size = 20)))
-
-by_drug_recal_large <- cateval::benefit_by_drug(match_recal_large$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_recal_large_bydrug <- plot_calibration_by_drug(by_drug_recal_large, title = "Overall Benefit Calibration by drug class (recalibration-in-the-large)")
-
-
-### Recalibration predictions ----
-
-match_recal <- cateval::match_benefit_pairs(
-  data = analysis_dataset,
-  drug_var = "drugclass",
-  outcome_var = outcome_var,
-  pred_cols = paste0("pred.recal.", drugs),
-  matching_var = matching_vars_prog,
-  caliper = c(prehba1c = 0.4),
-  seed = 19840503
-)
-
-deciles_recal_conc <- cateval::benefit_by_group(match_recal$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_recal_disc <- cateval::benefit_by_group(match_recal$discordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-deciles_recal_both <- cateval::benefit_by_group(match_recal$combined,   cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-overall_recal     <- cateval::benefit_overall(match_recal$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-calibration_recal <- cateval::benefit_citl_slope(match_recal$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-
-plot_recal_conc <- plot_calibration(deciles_recal_conc, title = "Concordant matched to discordant")
-plot_recal_disc <- plot_calibration(deciles_recal_disc, title = "Discordant matched to concordant")
-plot_recal_both <- plot_calibration(deciles_recal_both, title = "Combined")
-
-plot_overall_recal <- plot_recal_conc + plot_recal_disc + plot_recal_both +
-  patchwork::plot_layout(nrow = 1) +
-  patchwork::plot_annotation(title = "Overall Benefit Calibration (recalibration)", theme = theme(plot.title = element_text(size = 20)))
-
-by_drug_recal <- cateval::benefit_by_drug(match_recal$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
-plot_overall_recal_bydrug <- plot_calibration_by_drug(by_drug_recal, title = "Overall Benefit Calibration by drug class (recalibration)")
-
-
-### Compare the overall benefit estimate across model versions ----
-
-benefit_estimates <- bind_rows(
-  overall_original %>% mutate(model = "Original"),
-  overall_recal_large %>% mutate(model = "Recalibration-in-the-large"),
-  overall_recal %>% mutate(model = "Recalibration")
-) %>%
-  mutate(model = factor(
-    model,
-    levels = c("Original", "Recalibration-in-the-large", "Recalibration")
-  ))
-
-plot_benefit_estimates <- benefit_estimates %>%
-  ggplot(aes(x = model, y = observed, ymin = lower.ci, ymax = upper.ci, colour = model)) +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
-  geom_pointrange(size = 0.7) +
-  coord_flip() +
-  theme_classic(base_size = 18) +
-  theme(legend.position = "none", axis.text = element_text(size = 16)) +
-  labs(
-    x = NULL,
-    y = expression("Observed HbA"[1*c]*" benefit estimate (mmol/mol)"),
-    title = "Overall benefit estimates"
+  # match concordant vs discordant patients (returns the concordant, discordant
+  # and combined matched populations, plus the matchit objects for love plots).
+  # The matching can be changed here, e.g. if a love plot shows poor balance.
+  matched <- cateval::match_benefit_pairs(
+    data = analysis_dataset,
+    drug_var = "drugclass",
+    outcome_var = outcome_var,
+    pred_cols = paste0(prefix, drugs),
+    matching_var = matching_vars_prog,
+    caliper = c(prehba1c = 0.4),
+    seed = 19840503
   )
+
+  # group the matched pairs by predicted benefit (each cal_groups setting), for each population
+  deciles_conc <- cateval::benefit_by_group(matched$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+  deciles_disc <- cateval::benefit_by_group(matched$discordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+  deciles_both <- cateval::benefit_by_group(matched$combined,   cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+
+  # calibration split by drug class (one panel per drug class analysed)
+  by_drug <- cateval::benefit_by_drug(matched$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+
+  title_end <- paste0(" (", tolower(step_title), ")")
+
+  list(
+    matched     = matched,
+    # mean observed benefit of following the model, and calibration slope / intercept
+    overall     = cateval::benefit_overall(matched$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed),
+    calibration = cateval::benefit_citl_slope(matched$combined, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed),
+    # calibration plot for each matched population, side by side
+    plot = overall_figure(deciles_conc, deciles_disc, deciles_both,
+                          title = paste0("Overall Benefit Calibration", title_end)),
+    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by drug class", title_end))
+  )
+}
 
 
 ## Predicted vs Observed Calibration ----
 
+## Predicted vs observed HbA1c (the outcome HbA1c: at 12 months, or at 6 months
+## when the 12-month value is missing), with the prediction for the drug class
+## initiated, for all initiations. The three figures have the same axes, so the
+## versions of the predictions can be compared.
+##
 ## Interpretation of plots:
 # - Points close to the green line (y=x) indicate good calibration
 # - Points above the green line indicate underprediction (observed HbA1c greater than predicted)
 # - Points below the green line indicate overprediction (observed HbA1c less than predicted)
 
-### Original predictions
-plot_pred_obs_original <- analysis_dataset %>%
-  mutate(
-    pred_drug = pred_received(analysis_dataset, "pred.")
-  ) %>%
-  select(pred_drug, posthba1cfinal) %>%
-  ggplot(aes(x = pred_drug, y = posthba1cfinal)) +
-  geom_abline(aes(intercept = 0, slope = 1), colour = "green") +
-  geom_point(alpha = 0.4) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
-  theme_classic() +
-  theme(
-    axis.title = element_text(size = 18),
-    axis.text = element_text(size = 16),
-    plot.title = element_text(size = 20),
-    plot.subtitle = element_text(size = 17),
-    # room for the last x axis label, which overhangs the panel
-    plot.margin = margin(5.5, 18, 5.5, 5.5)
-  ) +
-  labs(
-    x = expression("Predicted 12-month HbA"[1*c]*" (mmol/mol)"),
-    y = expression("Observed 12-month HbA"[1*c]*" (mmol/mol)"),
-    title = "Predicted vs Observed",
-    subtitle = paste0("Original predictions; n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
-  )
+# helper: the initiations with an outcome, with the prediction (prefix) for the
+# drug class initiated (pred_drug)
+pred_obs_data_of <- function(prefix) {
+  pred_obs_data <- analysis_dataset %>% filter(!is.na(posthba1cfinal))
+  pred_obs_data$pred_drug <- pred_received(pred_obs_data, prefix)
+  pred_obs_data
+}
 
-### Recalibration-in-the-large predictions
-plot_pred_obs_recal_large <- analysis_dataset %>%
-  mutate(
-    pred_drug = pred_received(analysis_dataset, "pred.recal_large.")
-  ) %>%
-  select(pred_drug, posthba1cfinal) %>%
-  ggplot(aes(x = pred_drug, y = posthba1cfinal)) +
-  geom_abline(aes(intercept = 0, slope = 1), colour = "green") +
-  geom_point(alpha = 0.4) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
-  theme_classic() +
-  theme(
-    axis.title = element_text(size = 18),
-    axis.text = element_text(size = 16),
-    plot.title = element_text(size = 20),
-    plot.subtitle = element_text(size = 17),
-    # room for the last x axis label, which overhangs the panel
-    plot.margin = margin(5.5, 18, 5.5, 5.5)
-  ) +
-  labs(
-    x = expression("Predicted 12-month HbA"[1*c]*" (mmol/mol)"),
-    y = expression("Observed 12-month HbA"[1*c]*" (mmol/mol)"),
-    title = "Predicted vs Observed",
-    subtitle = paste0("Recalibration-in-the-large; n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
-  )
+# the same axes in the three figures: the ranges in the three versions
+pred_obs_axis_limits <- pred_obs_limits(lapply(c("pred.", "pred.recal_large.", "pred.recal."), pred_obs_data_of))
 
-### Recalibration predictions
-plot_pred_obs_recal <- analysis_dataset %>%
-  mutate(
-    pred_drug = pred_received(analysis_dataset, "pred.recal.")
-  ) %>%
-  select(pred_drug, posthba1cfinal) %>%
-  ggplot(aes(x = pred_drug, y = posthba1cfinal)) +
-  geom_abline(aes(intercept = 0, slope = 1), colour = "green") +
-  geom_point(alpha = 0.4) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
-  theme_classic() +
-  theme(
-    axis.title = element_text(size = 18),
-    axis.text = element_text(size = 16),
-    plot.title = element_text(size = 20),
-    plot.subtitle = element_text(size = 17),
-    # room for the last x axis label, which overhangs the panel
-    plot.margin = margin(5.5, 18, 5.5, 5.5)
-  ) +
-  labs(
-    x = expression("Predicted 12-month HbA"[1*c]*" (mmol/mol)"),
-    y = expression("Observed 12-month HbA"[1*c]*" (mmol/mol)"),
-    title = "Predicted vs Observed",
-    subtitle = paste0("Recalibration; n = ", format(sum(!is.na(analysis_dataset$posthba1cfinal)), big.mark = ","), " initiations")
-  )
+# helper: predicted vs observed figure, with the predictions with the given prefix
+plot_pred_obs <- function(prefix, step_title) {
+  draw_pred_obs(pred_obs_data_of(prefix), drugs, "Predicted vs Observed", step_title,
+                limits = pred_obs_axis_limits)
+}
 
 
 ## Predicted optimal therapy ----
@@ -1336,35 +1640,7 @@ plot_rank1 <- function(prefix, drug_set, step_title, set_title) {
     ) %>%
     arrange(desc(n))
 
-  rank1_breakdown %>%
-    mutate(drug = factor(drug, levels = model_drugs)) %>%
-    ggplot(aes(x = reorder(drug, -n), y = proportion, fill = drug)) +
-    geom_col(color = "black", size = 0.3) +
-    geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", sprintf("%.1f", proportion), "%)")),
-              vjust = -0.3, size = 5.5, lineheight = 0.9) +
-    scale_fill_manual(
-      values = drug_colours,
-      guide = "none"
-    ) +
-    scale_x_discrete(labels = function(x) str_wrap(drug_labels[x], 12)) +
-    scale_y_continuous(limits = c(0, max(rank1_breakdown$proportion) * 1.15),
-                     breaks = function(lim) { b <- pretty(lim); b[b <= 100] }) +
-    theme_minimal() +
-    theme(
-      axis.title = element_text(size = 18, face = "bold"),
-      axis.text = element_text(size = 16),
-      plot.title = element_text(size = 20),
-      plot.subtitle = element_text(size = 17),
-      plot.title.position = "plot",
-      panel.grid.major.x = element_blank()
-    ) +
-    labs(
-      x = "Drug Class",
-      y = "Proportion of Cohort (%)",
-      title = "Optimal Drug Distribution - Rank 1",
-      subtitle = paste0(step_title, "; full cohort
-", str_to_sentence(set_title))
-    )
+  draw_rank1(rank1_breakdown, paste0(step_title, "; full cohort\n", str_to_sentence(set_title)), drug_set)
 }
 
 # helper: drug classes within 3 mmol/mol of the best, for each patient
@@ -1394,80 +1670,14 @@ plot_tolerance3_added_removed <- function(prefix, drug_set, step_title, set_titl
     mutate(drug = str_trim(drug)) %>%
     filter(drug != "") %>%
     count(change_type, drug) %>%
-    complete(change_type = c("added", "removed"), drug, fill = list(n = 0)) %>%
-    mutate(
-      drug = factor(drug, levels = intersect(model_drugs, drug)),
-      signed_n = ifelse(change_type == "removed", -n, n)
-    )
+    complete(change_type = c("added", "removed"), drug, fill = list(n = 0))
 
-  plot_title <- "Tolerance-3 drug changes"
-  if (nrow(compare) == 0) {
-    return(ggplot() +
-             annotate("text", x = 0, y = 0, label = "No drug classes added or removed") +
-             theme_void() +
-             labs(title = plot_title, subtitle = paste0("Original vs ", step_title, "
-", str_to_sentence(set_title))))
-  }
-
-  compare %>%
-    ggplot(aes(x = drug, y = signed_n, fill = drug, alpha = change_type)) +
-    geom_hline(yintercept = 0, colour = "grey40", linetype = "dashed") +
-    geom_col(width = 0.7, colour = "black", linewidth = 0.2) +
-    scale_fill_manual(
-      values = drug_colours,
-      guide = "none"
-    ) +
-    scale_alpha_manual(values = c("added" = 1, "removed" = 0.6)) +
-    scale_x_discrete(labels = function(x) str_wrap(drug_labels[x], 12)) +
-    scale_y_continuous(
-      name = "Net count (n)",
-      labels = scales::comma,
-      sec.axis = sec_axis(
-        ~ . * 100 / nrow(analysis_dataset),
-        name = "Net percentage (%)",
-        labels = function(x) sprintf("%.1f", x)
-      )
-    ) +
-    theme_classic() +
-    theme(
-      axis.title = element_text(size = 18, face = "bold"),
-      axis.text = element_text(size = 16),
-      plot.title = element_text(size = 20),
-      plot.subtitle = element_text(size = 17),
-      plot.title.position = "plot",
-      legend.position = "bottom",
-      legend.title = element_text(size = 16),
-      legend.text = element_text(size = 15)
-    ) +
-    labs(
-      x = "Drug Class",
-      title = plot_title,
-      subtitle = paste0("Original vs ", step_title, "
-", str_to_sentence(set_title)),
-      alpha = "Change"
-    )
+  draw_tolerance3(compare, nrow(analysis_dataset),
+                  paste0("Original vs ", step_title, "\n", str_to_sentence(set_title)), drug_set)
 }
 
 # available is only made when it differs from all
 make_available <- !setequal(drugs, model_drugs)
-
-### Original predictions
-plot_rank1_original_all       <- plot_rank1("pred.", model_drugs, "Original predictions", "best of all drug classes")
-plot_rank1_original_available <- if (make_available) plot_rank1("pred.", drugs, "Original predictions", "best of the drug classes analysed")
-
-### Recalibration-in-the-large predictions
-plot_rank1_recal_large_all       <- plot_rank1("pred.recal_large.", model_drugs, "Recalibration-in-the-large", "best of all drug classes")
-plot_rank1_recal_large_available <- if (make_available) plot_rank1("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes analysed")
-
-plot_tolerance3_recal_large_all       <- plot_tolerance3_added_removed("pred.recal_large.", model_drugs, "Recalibration-in-the-large", "best of all drug classes")
-plot_tolerance3_recal_large_available <- if (make_available) plot_tolerance3_added_removed("pred.recal_large.", drugs, "Recalibration-in-the-large", "best of the drug classes analysed")
-
-### Recalibration predictions
-plot_rank1_recal_all       <- plot_rank1("pred.recal.", model_drugs, "Recalibration", "best of all drug classes")
-plot_rank1_recal_available <- if (make_available) plot_rank1("pred.recal.", drugs, "Recalibration", "best of the drug classes analysed")
-
-plot_tolerance3_recal_all       <- plot_tolerance3_added_removed("pred.recal.", model_drugs, "Recalibration", "best of all drug classes")
-plot_tolerance3_recal_available <- if (make_available) plot_tolerance3_added_removed("pred.recal.", drugs, "Recalibration", "best of the drug classes analysed")
 
 
 ## Best drug proportions and concordance ----
@@ -1532,6 +1742,108 @@ summarise_concordance <- function(prefix, drug_set, step_title, best_drug_from) 
     )
 }
 
+
+## Validation of each version of the predictions ----
+
+# helper: save a balance (love) plot, both matching directions in one figure
+save_loveplot <- function(match_obj, file) {
+  if (!is.null(match_obj)) save_plot(plot_loveplot(match_obj), file, panel_width = 3.4,
+                                     panel_height = function(p) 0.3 * n_axis_levels(p, "y"))
+}
+
+# helper: the whole validation of one version of the predictions (prefix, e.g.
+# "pred.recal."), with every figure saved as it is made. The files start with
+# file_start (e.g. "1_original") and are numbered by figure, so they sort in this
+# order:
+#   01_pairwise, 02_overall, 03_overall_by_drug, 04_loveplot, 05_pred_obs
+#   06_rank1: the predicted best drug class, of all drug classes (_all) and of the
+#     drug classes analysed (_available, only when some are not analysed)
+#   07_tolerance3: the same, for the drug classes within 3 mmol/mol of the best
+#     (compared with the original predictions, so not made for them)
+# Returns the pairwise results and overall benefit calibration, for the summaries.
+validate_predictions <- function(prefix, step_title, file_start) {
+  file <- function(number, figure) paste0(output_path, "/", file_start, "_", number, "_", figure, ".pdf")
+
+  pairwise_results <- pairwise_results_of(prefix)
+  save_pairwise(plot_pairwise(pairwise_results, "Pairwise Drug Calibration", step_title), file("01", "pairwise"))
+
+  benefit <- overall_benefit(prefix, step_title)
+  save_overall(benefit$plot, file("02", "overall"))
+  save_overall_by_drug(benefit$plot_by_drug, file("03", "overall_by_drug"))
+  save_loveplot(benefit$matched, file("04", "loveplot"))
+
+  save_pred_obs(plot_pred_obs(prefix, step_title), file("05", "pred_obs"))
+
+  save_decision(plot_rank1(prefix, model_drugs, step_title, "best of all drug classes"), file("06", "rank1_all"))
+  if (make_available) {
+    save_decision(plot_rank1(prefix, drugs, step_title, "best of the drug classes analysed"), file("06", "rank1_available"))
+  }
+  if (prefix != "pred.") {
+    save_decision(plot_tolerance3_added_removed(prefix, model_drugs, step_title, "best of all drug classes"),
+                  file("07", "tolerance3_all"))
+    if (make_available) {
+      save_decision(plot_tolerance3_added_removed(prefix, drugs, step_title, "best of the drug classes analysed"),
+                    file("07", "tolerance3_available"))
+    }
+  }
+
+  list(pairwise = pairwise_results, benefit = benefit)
+}
+
+
+### Part 5.1: Original predictions ----
+# Does the model's predicted benefit calibrate as it is?
+
+original <- validate_predictions("pred.", "Original predictions", "1_original")
+
+
+### Part 5.2: Recalibration-in-the-large ----
+# Does it calibrate with a drug-specific intercept correction?
+
+recal_large <- validate_predictions("pred.recal_large.", "Recalibration-in-the-large",
+                                    "2_recalibration_in_the_large")
+
+
+### Part 5.3: Recalibration ----
+# Does it calibrate with a drug-specific intercept and slope correction?
+
+recal <- validate_predictions("pred.recal.", "Recalibration", "3_recalibration")
+
+
+### Part 5.4: Summaries ----
+# Saved as 4_summary_...
+
+#### Overall benefit estimate across the versions of the predictions
+
+benefit_estimates <- bind_rows(
+  original$benefit$overall %>% mutate(model = "Original"),
+  recal_large$benefit$overall %>% mutate(model = "Recalibration-in-the-large"),
+  recal$benefit$overall %>% mutate(model = "Recalibration")
+) %>%
+  mutate(model = factor(
+    model,
+    levels = c("Original", "Recalibration-in-the-large", "Recalibration")
+  ))
+
+# (one analysis: the drug classes analysed, drawn as in v2)
+save_benefit_estimates(
+  draw_benefit_estimates(
+    benefit_estimates %>% mutate(analysis_label = "drug classes analysed", key_result = TRUE)
+  ),
+  paste0(output_path, "/4_summary_overall_benefit_estimates.pdf")
+)
+
+# table of the average overall benefit per version of the predictions (estimate and 95% CI)
+write.csv(
+  benefit_estimates %>%
+    select(model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
+  paste0(output_path, "/4_summary_overall_benefit_estimates.csv"),
+  row.names = FALSE
+)
+
+
+#### Best drug proportions and concordance
+
 concordance_summary <- bind_rows(
   summarise_concordance("pred.", model_drugs, "Original", "all"),
   if (make_available) summarise_concordance("pred.", drugs, "Original", "available"),
@@ -1545,117 +1857,6 @@ print(concordance_summary)
 
 write.csv(
   concordance_summary,
-  paste0(output_path, "/concordance_by_drug.csv"),
-  row.names = FALSE
-)
-
-
-#############################################################################
-
-# Step 4: Save Plots by Validation Step -----------------------------------
-
-## This section saves plots for the validation procedure, which evaluates the
-## differential (between-drug) treatment effect at three steps:
-##
-## STEP 1 — Original
-##   Does the original model's differential effect calibrate as is?
-##
-## STEP 2 — Recalibration-in-the-large
-##   Does a drug-specific intercept correction calibrate the differential effect?
-##
-## STEP 3 — Recalibration
-##   Does a drug-specific intercept + slope correction calibrate it?
-##
-## The prognostic factor (prognostic_vars) is a cross-cutting control applied
-## within every step when identified — adjusted for in the pairwise analysis and
-## matched on in the overall-benefit analysis — not a step of its own.
-
-
-## Save plots to separate PDFs by validation step ----
-
-# helper: save a pairwise figure
-save_pairwise <- function(fig, file) {
-  save_plot(fig, file, panel_width = pairwise_panel_size, panel_height = pairwise_panel_size)
-}
-
-
-## STEP 1: Original ----
-
-save_pairwise(plot_pairwise_original, paste0(output_path, "/step1_original_pairwise.pdf"))
-save_plot(plot_overall_original, paste0(output_path, "/step1_original_overall.pdf"),
-          panel_width = 4.2, panel_height = 4.2)
-save_plot(plot_overall_original_bydrug, paste0(output_path, "/step1_original_overall_by_drug.pdf"),
-          panel_width = 3.4, panel_height = 3.4)
-save_plot(plot_pred_obs_original, paste0(output_path, "/step1_original_pred_obs.pdf"),
-          panel_width = 5.5, panel_height = 4.2)
-
-# balance (love) plot, both matching directions in one figure
-save_plot(plot_loveplot(match_original), paste0(output_path, "/step1_original_loveplot.pdf"),
-          panel_width = 3.4, panel_height = function(p) 0.3 * n_axis_levels(p, "y"))
-
-
-## STEP 2: Recalibration-in-the-large ----
-
-save_pairwise(plot_pairwise_recal_large, paste0(output_path, "/step2_recalibration_in_the_large_pairwise.pdf"))
-save_plot(plot_overall_recal_large, paste0(output_path, "/step2_recalibration_in_the_large_overall.pdf"),
-          panel_width = 4.2, panel_height = 4.2)
-save_plot(plot_overall_recal_large_bydrug, paste0(output_path, "/step2_recalibration_in_the_large_overall_by_drug.pdf"),
-          panel_width = 3.4, panel_height = 3.4)
-save_plot(plot_pred_obs_recal_large, paste0(output_path, "/step2_recalibration_in_the_large_pred_obs.pdf"),
-          panel_width = 5.5, panel_height = 4.2)
-
-# balance (love) plot, both matching directions in one figure
-save_plot(plot_loveplot(match_recal_large), paste0(output_path, "/step2_recalibration_in_the_large_loveplot.pdf"),
-          panel_width = 3.4, panel_height = function(p) 0.3 * n_axis_levels(p, "y"))
-
-
-## STEP 3: Recalibration ----
-
-save_pairwise(plot_pairwise_recal, paste0(output_path, "/step3_recalibration_pairwise.pdf"))
-save_plot(plot_overall_recal, paste0(output_path, "/step3_recalibration_overall.pdf"),
-          panel_width = 4.2, panel_height = 4.2)
-save_plot(plot_overall_recal_bydrug, paste0(output_path, "/step3_recalibration_overall_by_drug.pdf"),
-          panel_width = 3.4, panel_height = 3.4)
-save_plot(plot_pred_obs_recal, paste0(output_path, "/step3_recalibration_pred_obs.pdf"),
-          panel_width = 5.5, panel_height = 4.2)
-
-# balance (love) plot, both matching directions in one figure
-save_plot(plot_loveplot(match_recal), paste0(output_path, "/step3_recalibration_loveplot.pdf"),
-          panel_width = 3.4, panel_height = function(p) 0.3 * n_axis_levels(p, "y"))
-
-
-## Additional Analyses: Clinical Decision Analysis ----
-
-save_plot(plot_rank1_original_all, paste0(output_path, "/clinical_decision_rank1_original_all.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-if (make_available) save_plot(plot_rank1_original_available, paste0(output_path, "/clinical_decision_rank1_original_available.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-
-save_plot(plot_rank1_recal_large_all, paste0(output_path, "/clinical_decision_rank1_recal_large_all.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-if (make_available) save_plot(plot_rank1_recal_large_available, paste0(output_path, "/clinical_decision_rank1_recal_large_available.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_tolerance3_recal_large_all, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large_all.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-if (make_available) save_plot(plot_tolerance3_recal_large_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_large_available.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-
-save_plot(plot_rank1_recal_all, paste0(output_path, "/clinical_decision_rank1_recal_all.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-if (make_available) save_plot(plot_rank1_recal_available, paste0(output_path, "/clinical_decision_rank1_recal_available.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-save_plot(plot_tolerance3_recal_all, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_all.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-if (make_available) save_plot(plot_tolerance3_recal_available, paste0(output_path, "/clinical_decision_tolerance3_added_removed_original_vs_recal_available.pdf"),
-          panel_width = function(p) max(3, 1.25 * n_axis_levels(p)), panel_height = 3.6)
-
-save_plot(plot_benefit_estimates, paste0(output_path, "/overall_benefit_estimates_by_model_version.pdf"),
-          panel_width = 5.5, panel_height = 2.4)
-
-# table of the average overall benefit per step (estimate and 95% CI)
-write.csv(
-  benefit_estimates %>%
-    select(model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
-  paste0(output_path, "/overall_benefit_estimates_by_model_version.csv"),
+  paste0(output_path, "/4_summary_concordance_by_drug.csv"),
   row.names = FALSE
 )
