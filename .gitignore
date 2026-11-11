@@ -65,3 +65,4 @@ Outputs/
 # Online calculator files from the example scripts (patient-level rows)
 calculator_upload.csv
 calculator_predictions.csv
+Scripts/04.V2_Validation/02.intercept_check_plots.md
