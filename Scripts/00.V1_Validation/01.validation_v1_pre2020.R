@@ -1,8 +1,10 @@
 ## Test run of example_validation_script_v1.R on CPRD: all initiations before
 ##  2020-10-14 (the cohort of the update scripts starts on that date). The
 ##  script is v1 unchanged apart from lines marked "CPRD test run": the CPRD
-##  cohort is loaded in Part 2a, predictions come from Model_files/ and outputs
-##  go to Scripts/00.V1_Validation/Outputs/Pre2020.
+##  cohort is loaded in Part 2a, predictions come from Model_files/, each
+##  patient's own deprivation (imd5) is used instead of the middle quintile (in
+##  the predictions, and adjusted and matched on, as in the v2 test run), and
+##  outputs go to Scripts/00.V1_Validation/Outputs/Pre2020.
 ##
 ## This script shows how to validate the 5-drug model in a new cohort and how to
 ##  visualise the results.
@@ -183,7 +185,7 @@ analysis_raw <- analysis_raw %>%
     gender, dstartdate_age,
     t2dmduration, ethnicity_5cat,
     drug_substance, drug_class,
-    smoking_cat,
+    imd_decile, smoking_cat,
     prebmi, prehba1c, preegfr, pretotalcholesterol, prehdl, prealt,
     drugline_all, MFN, SGLT2, GLP1, DPP4, TZD, SU, hba1cmonth,
     posthba1cfinal
@@ -208,6 +210,11 @@ analysis_dataset <- analysis_raw %>%
     # Smoking
     smoke = ifelse(is.na(smoking_cat), "Not recorded", smoking_cat),
 
+    # Deprivation (IMD quintile), used in the model predictions (Part 3)
+    imd5 = ifelse(is.na(imd_decile), 5, imd_decile),
+    imd5 = factor(ceiling(imd5/2), levels = c(1, 2, 3, 4, 5),
+                  labels = c("1 (least)", "2", "3", "4", "5 (most)")),
+
     # Number of current treatments
     ncurrtx = MFN + SGLT2 + GLP1 + DPP4 + TZD + SU,
     ncurrtx = ifelse(ncurrtx > 4, 4, ncurrtx),
@@ -228,7 +235,7 @@ analysis_dataset <- analysis_raw %>%
   filter(!(drug_substance %in% sema_substances)) %>%
   select(all_of(c(
     "dstartdate", "agetx", "sex", "t2dmduration", "ethnicity",
-    "drugclass", "smoke",
+    "drugclass", "imd5", "smoke",
     "prebmi", "prehba1c", "preegfr", "pretotalcholesterol", "prehdl", "prealt",
     "drugline", "ncurrtx", "hba1cmonth",
     "posthba1cfinal"
@@ -594,8 +601,8 @@ if (use_calculator) {
   # in the online calculator. hba1cmonth is each initiation's own.
   # (the model needs a data.frame, not a tibble)
   prediction_list <- lapply(imputed_list, function(imputed) {
-    as.data.frame(imputed) %>%
-      mutate(imd5 = factor("3", levels = c("1 (least)", "2", "3", "4", "5 (most)")))
+    # CPRD test run: each patient's own deprivation (imd5, from the CPRD cohort)
+    as.data.frame(imputed)
   })
 
   # Published model, for each of its 5 drug classes: predicted in each imputed
@@ -1449,6 +1456,7 @@ cal_groups = c(3, 5, 10) # Number of groups to stratify predictions into
 adjustment_vars = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
                      "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth",
                      "sex", "smoke", "ncurrtx", "drugline")
+adjustment_vars = c(adjustment_vars, "imd5") # CPRD test run: each patient's own deprivation, as in the v2 test run
 
 # - Pairwise figure: the drug classes analysed against each other
 
@@ -1512,6 +1520,7 @@ matching_vars <- c(
   "preegfr", "pretotalcholesterol", "prehdl",
   "sex", "smoke", "ncurrtx", "drugline"
 )
+matching_vars <- c(matching_vars, "imd5") # CPRD test run: each patient's own deprivation, as in the v2 test run
 # The same covariates plus any prognostic factors in prognostic_vars. Used for
 # matching in every version of the predictions (the prognostic factor is a
 # cross-cutting control, not a version of its own); equal to matching_vars until you populate
@@ -1550,6 +1559,14 @@ love_labels <- c(
   "drugline3"           = "'Number of previous glucose-lowering drugs = 3'",
   "drugline4"           = "'Number of previous glucose-lowering drugs = 4'",
   "drugline5+"          = "'Number of previous glucose-lowering drugs = >4'"
+)
+# CPRD test run: deprivation (matched on above), labelled as in the v2 test run
+love_labels <- c(love_labels,
+  "imd51 (least)" = "'Index of multiple deprivation = 1 (least deprived)'",
+  "imd52"         = "'Index of multiple deprivation = 2'",
+  "imd53"         = "'Index of multiple deprivation = 3'",
+  "imd54"         = "'Index of multiple deprivation = 4'",
+  "imd55 (most)"  = "'Index of multiple deprivation = 5 (most deprived)'"
 )
 
 # Balance (love) plot of one matching: absolute standardised mean
