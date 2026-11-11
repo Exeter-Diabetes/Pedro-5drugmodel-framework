@@ -16,8 +16,8 @@ and after recalibration for each drug class.
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`example_validation_script_v1.R`](example_validation_script_v1.R) | Example: validate the **published model** (SGLT2i, GLP-1RA, DPP4i, SU, TZD) in your own data.                                                                                 |
 | [`example_validation_script_v2.R`](example_validation_script_v2.R) | Example: validate the **updated model** in your own data, with GLP-1RA split into dulaglutide and liraglutide, plus oral semaglutide, injectable semaglutide and tirzepatide. |
-| [`Scripts/`](Scripts)                                              | The CPRD Aurum analyses for the model update.                                                                                                                                       |
-| [`archive/`](archive)                                              | SDRN validation scripts from the first version of this repository, kept for future work. Not maintained.                                                                            |
+| [`Scripts/`](Scripts)                                              | The CPRD Aurum analyses for the model update, and the validation of both model versions in SDRN (Scottish Diabetes Research Network, `Scripts/05.SDRN`).                           |
+| [`archive/`](archive)                                              | SDRN validation scripts from the first version of this repository, replaced by `Scripts/05.SDRN`. Not maintained.                                                                    |
 
 ## Example scripts
 
