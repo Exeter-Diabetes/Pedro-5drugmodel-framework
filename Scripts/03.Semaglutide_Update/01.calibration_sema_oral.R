@@ -1177,7 +1177,7 @@ save_overall_by_drug <- function(fig, file) save_plot(fig, file, panel_width = 3
 # (by_drug, 3.6 inches). pred_obs_data has one row per initiation: drugclass,
 # pred_drug and posthba1cfinal. limits: list(x = , y = ) of the axis ranges,
 # the same for every predicted vs observed figure of the script
-# (pred_obs_limits()), so the figures of the three steps can be compared.
+# (pred_obs_limits()), so the figures of every step can be compared.
 draw_pred_obs <- function(pred_obs_data, pred_drugs, title, step_title, by_drug = FALSE,
                           limits = pred_obs_limits(list(pred_obs_data))) {
   if (length(pred_drugs) == 0) return(NULL)
@@ -1362,7 +1362,7 @@ save_decision <- function(fig, file) {
 
 ## Overall benefit estimates figure ----
 
-# The overall benefit estimates (rows with key_result) in the three steps, one
+# The overall benefit estimates (rows with key_result) in each step, one
 # panel (5.5 x 1.6 inches) per analysis: observed, lower.ci, upper.ci, model
 # (step) and analysis_label.
 draw_benefit_estimates <- function(benefit_estimates, plot_subtitle = NULL,
@@ -1374,7 +1374,8 @@ draw_benefit_estimates <- function(benefit_estimates, plot_subtitle = NULL,
   benefit_estimates <- benefit_estimates %>%
     filter(key_result) %>%
     mutate(
-      model = factor(model, levels = c("Recalibration", "Recalibration-in-the-large", "Original")),
+      model = factor(model, levels = c("Recalibration", "Recalibration-in-the-large",
+                                       "Minimal recalibration-in-the-large", "Original")),
       analysis_label = capitalise(as.character(analysis_label)),
       analysis_label = factor(analysis_label, levels = unique(analysis_label))
     )
