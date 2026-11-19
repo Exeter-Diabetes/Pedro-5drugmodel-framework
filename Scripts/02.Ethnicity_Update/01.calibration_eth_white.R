@@ -53,7 +53,7 @@ library(tidyverse)
 library(tableone)
 # library(remotes)
 # remotes::install_github("PM-Cardoso/cateval")
-library(cateval) # Custom R package developed by Pedro for calibration evaluation
+library(cateval) # calibration of predicted treatment benefit
 
 
 #############################################################################
@@ -97,7 +97,7 @@ glp1_main <- "Dulaglutide"
 #
 # OUTCOME VARIABLES:
 #   - posthba1cfinal: 12-month HbA1c outcome (numeric, mmol/mol)
-#   - hba1cmonth: Months from treatment initiation to outcome measurement (numeric, 3-15 months)
+#   - hba1cmonth: Months from treatment initiation to outcome measurement (numeric, months)
 #
 # TREATMENT VARIABLES:
 #   - drugclass: Drug class being initiated (categorical)
@@ -105,15 +105,15 @@ glp1_main <- "Dulaglutide"
 #     (GLP1 split into its subtypes, glp1_subtypes in Part 1)
 #
 # BASELINE CHARACTERISTICS:
-#   - agetx: Age at treatment initiation (numeric, 18-79 years)
+#   - agetx: Age at treatment initiation (numeric, years)
 #   - sex: Patient sex (categorical: "Male" or "Female")
-#   - t2dmduration: Duration of type 2 diabetes (numeric, 0-71 years)
-#   - prehba1c: Baseline HbA1c (numeric, 53-110 mmol/mol)
-#   - prebmi: Baseline BMI (numeric, 15-100 kg/m2)
-#   - preegfr: Baseline eGFR (numeric, 45-300 mL/min per 1.73 m2)
-#   - prealt: Baseline alanine aminotransferase (numeric, 0-200 U/L)
-#   - pretotalcholesterol: Baseline total cholesterol (numeric, 0.5-20 mmol/L)
-#   - prehdl: Baseline HDL cholesterol (numeric, 0.2-10 mmol/L)
+#   - t2dmduration: Duration of type 2 diabetes (numeric, years)
+#   - prehba1c: Baseline HbA1c (numeric, mmol/mol)
+#   - prebmi: Baseline BMI (numeric, kg/m2)
+#   - preegfr: Baseline eGFR (numeric, mL/min per 1.73 m2)
+#   - prealt: Baseline alanine aminotransferase (numeric, U/L)
+#   - pretotalcholesterol: Baseline total cholesterol (numeric, mmol/L)
+#   - prehdl: Baseline HDL cholesterol (numeric, mmol/L)
 #   - ethnicity: Patient ethnicity (categorical)
 #     Valid values: "White", "South Asian", "Black", "Mixed", "Other", or "Missing"
 #   - smoke: Smoking status (categorical)
@@ -458,12 +458,10 @@ drug_labels <- c("SGLT2" = "SGLT2i", "Dulaglutide" = "Dulaglutide", "Liraglutide
 drug_colours <- c("SGLT2" = "#E69F00", "Dulaglutide" = "#56B4E9", "Liraglutide" = "#56B4E9",
                   "DPP4" = "#0072B2", "SU" = "#CC79A7", "TZD" = "#D55E00")
 
-# Optional prognostic factors (leave empty if none). These are variables that
-# affect the outcome irrespective of treatment, so they enter as a single overall
-# (treatment-independent) effect: a shared main effect in the recalibration models
-# below, plus covariate adjustment in the pairwise analysis and matching in the
-# overall-benefit analysis (via matching_vars_prog). The original predictions are
-# not adjusted for them.
+# Optional prognostic factors (leave empty if none): variables that affect the
+# outcome whatever the treatment. They get one shared coefficient in
+# recalibration-in-the-large and recalibration (not minimal), and are adjusted and
+# matched on in every version, the original included.
 prognostic_vars <- c()
 prognostic_terms <- if (length(prognostic_vars) > 0) {
   paste0(" + ", paste(prognostic_vars, collapse = " + "))
@@ -559,20 +557,22 @@ for (drug in drugs) {
 }
 recalib_recal_large_params <- summarize_lm(fit_recal_large, "recal_large")
 
-#### Minimal recalibration-in-the-large (drug-specific intercept beyond minimal_threshold, GLP1 subtypes pooled, shared prognostic effect)
-# The recalibration-in-the-large predictions without the intercepts within
-# minimal_threshold (one intercept for the GLP1 subtypes together). accepted marks
-# the terms used (in recalibration_params_full.csv).
-intercepts_recal_large <- coef(fit_recal_large)[paste0("drugclass", recal_classes)]
-accepted <- setNames(abs(intercepts_recal_large) > minimal_threshold, recal_classes)
+#### Minimal recalibration-in-the-large (drug-specific intercept beyond minimal_threshold, GLP1 subtypes pooled, no prognostic factors)
+# Its own fit without prognostic_vars, so the decision does not depend on how they
+# are coded. A drug class (the GLP1 subtypes together) takes its intercept only when the estimate is
+# beyond minimal_threshold; the others keep their original predictions.
+fit_recal_minimal <- lm(as.formula(paste0(outcome_var, " ~ 0 + drugclass + offset(pred_assigned)")),
+                        data = recal_data)
+intercepts_recal_minimal <- coef(fit_recal_minimal)[paste0("drugclass", recal_classes)]
+accepted <- setNames(abs(intercepts_recal_minimal) > minimal_threshold, recal_classes)
 for (drug in drugs) {
-  analysis_dataset[[paste0("pred.recal_minimal.", drug)]] <- predict_for_drug(fit_recal_large, drug) -
-    if (accepted[[recal_class(drug)]]) 0 else intercepts_recal_large[[paste0("drugclass", recal_class(drug))]]
+  analysis_dataset[[paste0("pred.recal_minimal.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]] +
+    if (accepted[[recal_class(drug)]]) intercepts_recal_minimal[[paste0("drugclass", recal_class(drug))]] else 0
 }
 cat("Minimal recalibration-in-the-large: intercepts used for",
     if (any(accepted)) paste(recal_classes[accepted], collapse = ", ") else "no drug class", "\n")
-recalib_recal_large_params <- recalib_recal_large_params %>%
-  mutate(accepted = !startsWith(term, "drugclass") | abs(estimate) > minimal_threshold)
+recalib_recal_minimal_params <- summarize_lm(fit_recal_minimal, "recal_minimal") %>%
+  mutate(accepted = abs(estimate) > minimal_threshold)
 
 #### Recalibration (drug-specific intercept & slope, GLP1 subtypes pooled, shared prognostic effect)
 formula_recal <- as.formula(
@@ -593,7 +593,7 @@ for (drug in setdiff(model_drugs, drugs)) {
 }
 
 # Combine and save recalibration parameters
-recalib_params_full <- bind_rows(recalib_recal_large_params, recalib_recal_params)
+recalib_params_full <- bind_rows(recalib_recal_minimal_params, recalib_recal_large_params, recalib_recal_params)
 
 write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.csv"))
 
@@ -948,12 +948,12 @@ overall_figure <- function(deciles_conc, deciles_disc, deciles_both, title) {
     )
 }
 
-# same plot, one panel (3.4 inches) per drug class that anchors the pairs (the
-# index / matched patient's drug); the LOESS curve is fitted separately within
-# each panel, from that drug's own group points. Each facet title is the drug
-# class and its number of matched pairs, summing the per-group `n` returned by
-# benefit_by_drug(). The number of groups is chosen per drug class.
-plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
+# same plot, one panel (3.4 inches) per recommended drug class; the LOESS curve is
+# fitted separately within each panel, from that drug's own group points. Each facet
+# title is the drug class and its number of matched pairs (the per-group `n` of
+# benefit_by_drug() summed). The number of groups is chosen per drug class; drug
+# classes with fewer than min_pairs pairs are left out (named in the subtitle).
+plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pairs = 100) {
   if ("n_groups" %in% names(by_drug)) {
     by_drug <- by_drug %>%
       group_by(index_drug, n_groups) %>%
@@ -968,6 +968,12 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
       filter(n_groups == .chosen_groups) %>%
       select(-.min_group_n, -.chosen_groups, -n_groups)
   }
+
+  pairs_per_drug <- by_drug %>%
+    group_by(index_drug) %>%
+    summarise(n_pairs = sum(n, na.rm = TRUE), .groups = "drop")
+  dropped <- as.character(pairs_per_drug$index_drug[pairs_per_drug$n_pairs < min_pairs])
+  by_drug <- by_drug %>% filter(!(as.character(index_drug) %in% dropped))
 
   panel_size <- 3.4
   panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
@@ -998,7 +1004,9 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
   # the step goes in the subtitle, before the number of matched pairs
   parts <- split_title_step(title)
   subtitle <- paste0(if (!is.null(parts$step)) paste0(parts$step, "; "),
-                     "n = ", format(sum(by_drug$n, na.rm = TRUE), big.mark = ","), " matched pairs")
+                     "n = ", format(sum(by_drug$n, na.rm = TRUE), big.mark = ","), " matched pairs",
+                     if (length(dropped) > 0) paste0("; not shown (fewer than ", min_pairs, " pairs): ",
+                                                     paste(figure_labels(panel_drugs)[dropped], collapse = ", ")))
   title_width <- n_cols * panel_size + 0.8
 
   plot_calibration(by_drug, text_scale = text_scale,
@@ -1324,8 +1332,8 @@ cal_groups = c(3, 5, 10) # Number of groups to stratify predictions into
 # - adjustment_var: baseline covariates to adjust for in the pairwise calibration
 #   models. These should match the variables used in original model development.
 #   Any additional prognostic factors go in prognostic_vars (above) and are added
-#   on top (as an overall, treatment-independent effect) in the recalibrated
-#   versions (adjustment_vars_prog), not the original.
+#   on top (as an overall, treatment-independent effect) in every version of the
+#   predictions (adjustment_vars_prog), the original included.
 
 adjustment_vars = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
                      "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth",
@@ -1344,7 +1352,7 @@ pairwise_calibration_for <- function(analysis, prefix) {
     prediction_vars = paste0(prefix, analysis$drugs),
     outcome_var = outcome_var,
     cal_groups = cal_groups,  # Number of groups to stratify predictions into
-    adjustment_var = if (prefix == "pred.") adjustment_vars else adjustment_vars_prog
+    adjustment_var = adjustment_vars_prog
   )
 }
 
@@ -1433,9 +1441,9 @@ matching_vars <- c(
   "sex", "smoke", "ncurrtx", "drugline", "imd5"
 )
 # The same covariates plus any prognostic factors in prognostic_vars. Used for
-# matching in every version of the predictions but the original (the prognostic factor is a
-# cross-cutting control, not a version of its own); equal to matching_vars until you populate
-# prognostic_vars.
+# matching in every version of the predictions, the original included (the prognostic
+# factor is a cross-cutting control, not a version of its own); equal to matching_vars
+# until you populate prognostic_vars.
 matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
 
 # Confidence intervals: FALSE uses fast analytical intervals; set to TRUE for
@@ -1563,7 +1571,7 @@ match_pairs <- function(analysis, prefix, match_args_disc = list()) {
     drug_var = "drugclass",
     outcome_var = outcome_var,
     pred_cols = paste0(prefix, analysis$model_drugs),
-    matching_var = if (prefix == "pred.") matching_vars else matching_vars_prog,
+    matching_var = matching_vars_prog,
     caliper = c(prehba1c = 0.4),
     match_args_disc = match_args_disc,
     seed = 19840503
@@ -1587,8 +1595,9 @@ overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = li
   plot_disc <- plot_calibration(deciles_disc, title = "Discordant matched to concordant")
   plot_both <- plot_calibration(deciles_both, title = "Combined")
 
-  # calibration split by drug class (one panel per drug class of the analysis)
-  by_drug <- cateval::benefit_by_drug(matched$combined, drugs = analysis$drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+  # calibration by recommended drug class: concordant pairs only, so each panel is
+  # the patients recommended that drug class who received it
+  by_drug <- cateval::benefit_by_drug(matched$concordant, drugs = analysis$drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
   list(
     matched      = matched,
@@ -1599,7 +1608,7 @@ overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = li
     plot_both    = plot_both,
     plot         = overall_figure(deciles_conc, deciles_disc, deciles_both,
                                   paste0("Overall Benefit Calibration", title_suffix)),
-    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by drug class", title_suffix))
+    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by recommended drug class", title_suffix))
   )
 }
 
@@ -1897,8 +1906,8 @@ write_csv(
 ## 3_recalibration_in_the_large_..., 4_recalibration_...), then the summaries (5_summary_...).
 ##
 ## The prognostic factor (prognostic_vars) is a cross-cutting control applied
-## within every version but the original when identified - adjusted for in the
-## pairwise analysis and matched on in the overall-benefit analysis - not a
+## within every version, the original included, when identified - adjusted for in
+## the pairwise analysis and matched on in the overall-benefit analysis - not a
 ## version of its own.
 
 # The sensitivity analysis is saved with the same file names plus sens$suffix.
@@ -2035,6 +2044,29 @@ write.csv(
   ) %>%
     select(analysis, model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
   paste0(output_path, "/5_summary_overall_benefit_estimates.csv"),
+  row.names = FALSE
+)
+
+# table of the calibration-in-the-large and slope of predicted benefit per version
+# of the predictions (estimate and 95% CI), all matched pairs
+combine_benefit_calibration <- function(original, recal_minimal, recal_large, recal) {
+  bind_rows(
+    original$calibration %>% mutate(model = "Original"),
+    recal_minimal$calibration %>% mutate(model = "Minimal recalibration-in-the-large"),
+    recal_large$calibration %>% mutate(model = "Recalibration-in-the-large"),
+    recal$calibration %>% mutate(model = "Recalibration")
+  )
+}
+write.csv(
+  bind_rows(
+    combine_benefit_calibration(benefit_original, benefit_recal_minimal, benefit_recal_large, benefit_recal) %>%
+      mutate(analysis = main$label),
+    combine_benefit_calibration(benefit_original_sens, benefit_recal_minimal_sens, benefit_recal_large_sens,
+                                benefit_recal_sens) %>%
+      mutate(analysis = sens$label)
+  ) %>%
+    select(analysis, model, metric, estimate, lower_ci = lower.ci, upper_ci = upper.ci),
+  paste0(output_path, "/5_summary_benefit_calibration.csv"),
   row.names = FALSE
 )
 

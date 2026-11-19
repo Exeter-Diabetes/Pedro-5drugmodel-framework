@@ -44,7 +44,7 @@ library(tidyverse)
 library(tableone)
 # library(remotes)
 # remotes::install_github("PM-Cardoso/cateval")
-library(cateval) # Custom R package developed by Pedro for calibration evaluation
+library(cateval) # calibration of predicted treatment benefit
 
 
 #############################################################################
@@ -87,7 +87,7 @@ glp1_main <- "Dulaglutide"
 #
 # OUTCOME VARIABLES:
 #   - posthba1cfinal: 12-month HbA1c outcome (numeric, mmol/mol)
-#   - hba1cmonth: Months from treatment initiation to outcome measurement (numeric, 3-15 months)
+#   - hba1cmonth: Months from treatment initiation to outcome measurement (numeric, months)
 #
 # TREATMENT VARIABLES:
 #   - drugclass: Drug class being initiated (categorical)
@@ -95,15 +95,15 @@ glp1_main <- "Dulaglutide"
 #     (GLP1 split into its subtypes, glp1_subtypes in Part 1)
 #
 # BASELINE CHARACTERISTICS:
-#   - agetx: Age at treatment initiation (numeric, 18-79 years)
+#   - agetx: Age at treatment initiation (numeric, years)
 #   - sex: Patient sex (categorical: "Male" or "Female")
-#   - t2dmduration: Duration of type 2 diabetes (numeric, 0-71 years)
-#   - prehba1c: Baseline HbA1c (numeric, 53-110 mmol/mol)
-#   - prebmi: Baseline BMI (numeric, 15-100 kg/m2)
-#   - preegfr: Baseline eGFR (numeric, 45-300 mL/min per 1.73 m2)
-#   - prealt: Baseline alanine aminotransferase (numeric, 0-200 U/L)
-#   - pretotalcholesterol: Baseline total cholesterol (numeric, 0.5-20 mmol/L)
-#   - prehdl: Baseline HDL cholesterol (numeric, 0.2-10 mmol/L)
+#   - t2dmduration: Duration of type 2 diabetes (numeric, years)
+#   - prehba1c: Baseline HbA1c (numeric, mmol/mol)
+#   - prebmi: Baseline BMI (numeric, kg/m2)
+#   - preegfr: Baseline eGFR (numeric, mL/min per 1.73 m2)
+#   - prealt: Baseline alanine aminotransferase (numeric, U/L)
+#   - pretotalcholesterol: Baseline total cholesterol (numeric, mmol/L)
+#   - prehdl: Baseline HDL cholesterol (numeric, mmol/L)
 #   - ethnicity: Patient ethnicity (categorical)
 #     Valid values: "White", "South Asian", "Black", "Mixed", "Other", or "Missing"
 #   - smoke: Smoking status (categorical)
@@ -931,12 +931,12 @@ overall_figure <- function(deciles_conc, deciles_disc, deciles_both, title) {
     )
 }
 
-# same plot, one panel (3.4 inches) per drug class that anchors the pairs (the
-# index / matched patient's drug); the LOESS curve is fitted separately within
-# each panel, from that drug's own group points. Each facet title is the drug
-# class and its number of matched pairs, summing the per-group `n` returned by
-# benefit_by_drug(). The number of groups is chosen per drug class.
-plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
+# same plot, one panel (3.4 inches) per recommended drug class; the LOESS curve is
+# fitted separately within each panel, from that drug's own group points. Each facet
+# title is the drug class and its number of matched pairs (the per-group `n` of
+# benefit_by_drug() summed). The number of groups is chosen per drug class; drug
+# classes with fewer than min_pairs pairs are left out (named in the subtitle).
+plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pairs = 100) {
   if ("n_groups" %in% names(by_drug)) {
     by_drug <- by_drug %>%
       group_by(index_drug, n_groups) %>%
@@ -951,6 +951,12 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
       filter(n_groups == .chosen_groups) %>%
       select(-.min_group_n, -.chosen_groups, -n_groups)
   }
+
+  pairs_per_drug <- by_drug %>%
+    group_by(index_drug) %>%
+    summarise(n_pairs = sum(n, na.rm = TRUE), .groups = "drop")
+  dropped <- as.character(pairs_per_drug$index_drug[pairs_per_drug$n_pairs < min_pairs])
+  by_drug <- by_drug %>% filter(!(as.character(index_drug) %in% dropped))
 
   panel_size <- 3.4
   panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
@@ -981,7 +987,9 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100) {
   # the step goes in the subtitle, before the number of matched pairs
   parts <- split_title_step(title)
   subtitle <- paste0(if (!is.null(parts$step)) paste0(parts$step, "; "),
-                     "n = ", format(sum(by_drug$n, na.rm = TRUE), big.mark = ","), " matched pairs")
+                     "n = ", format(sum(by_drug$n, na.rm = TRUE), big.mark = ","), " matched pairs",
+                     if (length(dropped) > 0) paste0("; not shown (fewer than ", min_pairs, " pairs): ",
+                                                     paste(figure_labels(panel_drugs)[dropped], collapse = ", ")))
   title_width <- n_cols * panel_size + 0.8
 
   plot_calibration(by_drug, text_scale = text_scale,
@@ -1559,8 +1567,9 @@ overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = li
   plot_disc <- plot_calibration(deciles_disc, title = "Discordant matched to concordant")
   plot_both <- plot_calibration(deciles_both, title = "Combined")
 
-  # calibration split by drug class (one panel per drug class of the analysis)
-  by_drug <- cateval::benefit_by_drug(matched$combined, drugs = analysis$drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+  # calibration by recommended drug class: concordant pairs only, so each panel is
+  # the patients recommended that drug class who received it
+  by_drug <- cateval::benefit_by_drug(matched$concordant, drugs = analysis$drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
   list(
     matched      = matched,
@@ -1571,7 +1580,7 @@ overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = li
     plot_both    = plot_both,
     plot         = overall_figure(deciles_conc, deciles_disc, deciles_both,
                                   paste0("Overall Benefit Calibration", title_suffix)),
-    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by drug class", title_suffix))
+    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by recommended drug class", title_suffix))
   )
 }
 
@@ -1977,6 +1986,27 @@ write.csv(
   ) %>%
     select(analysis, model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
   paste0(output_path, "/4_summary_overall_benefit_estimates.csv"),
+  row.names = FALSE
+)
+
+# table of the calibration-in-the-large and slope of predicted benefit per version
+# of the predictions (estimate and 95% CI), all matched pairs
+combine_benefit_calibration <- function(original, recal_large, recal) {
+  bind_rows(
+    original$calibration %>% mutate(model = "Original"),
+    recal_large$calibration %>% mutate(model = "Recalibration-in-the-large"),
+    recal$calibration %>% mutate(model = "Recalibration")
+  )
+}
+write.csv(
+  bind_rows(
+    combine_benefit_calibration(benefit_original, benefit_recal_large, benefit_recal) %>%
+      mutate(analysis = main$label),
+    combine_benefit_calibration(benefit_original_sens, benefit_recal_large_sens, benefit_recal_sens) %>%
+      mutate(analysis = sens$label)
+  ) %>%
+    select(analysis, model, metric, estimate, lower_ci = lower.ci, upper_ci = upper.ci),
+  paste0(output_path, "/4_summary_benefit_calibration.csv"),
   row.names = FALSE
 )
 

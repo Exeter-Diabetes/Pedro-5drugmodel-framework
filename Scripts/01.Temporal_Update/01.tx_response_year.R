@@ -7,7 +7,7 @@ library(patchwork) # aligning the response and initiation-count panels
 library(tableone)
 # library(remotes)
 # remotes::install_github("PM-Cardoso/cateval")
-library(cateval) # Custom R package developed by Pedro for calibration evaluation
+library(cateval) # calibration of predicted treatment benefit
 
 
 # load required libraries
