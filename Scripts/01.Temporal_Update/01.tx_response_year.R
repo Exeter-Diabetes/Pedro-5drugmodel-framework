@@ -24,7 +24,7 @@ is.integer64 <- function(x){
 
 # set up dataset (cohort cached by 01.cohort_scripts.R)
 analysis_raw <- analysis_raw %>%
-  analysis$cached("ethnicity") %>%
+  analysis$cached("20261113_ethnicity") %>%
   # select variables needed (to shorten the load time)
   select(
     patid, dstartdate,
