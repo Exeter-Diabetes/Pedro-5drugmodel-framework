@@ -12,14 +12,15 @@
 ##  GLP1 prediction.
 ##
 ## The model validated here is the published model plus the post-2020 update
-##  estimated in 01.Temporal_Update/02.calibration_new_data_post2020.R (read
-##  from Model_files), which has its own intercept for each GLP1 subtype.
+##  (minimal recalibration-in-the-large) estimated in
+##  01.Temporal_Update/02.calibration_new_data_post2020.R (read from Model_files),
+##  which has its own intercept for each GLP1 subtype.
 ##  "Original" below therefore means the updated model for the model drug
 ##  classes, with pred.Inje_Semaglutide = the published pred.GLP1.
-##  Recalibration-in-the-large and recalibration then estimate an intercept (and
-##  slope) for the new semaglutide class only: the model drug classes are kept
+##  The recalibrations then estimate an intercept (and slope) for the new
+##  semaglutide class only: the model drug classes are kept
 ##  fixed at the post-2020 update (no further adjustment), so their recalibrated
-##  predictions equal the original ones. The Inje_Semaglutide intercept, on top of the
+##  predictions equal the original ones. The minimal recalibration-in-the-large Inje_Semaglutide intercept, on top of the
 ##  published GLP1 prediction, is the injectable semaglutide update, saved to
 ##  03.Semaglutide_Update/Data with its difference from each GLP1 subtype's
 ##  post-2020 update. Each version's semaglutide estimate is also compared, with its
@@ -40,20 +41,23 @@
 ##    a) Load the CPRD cohort, choose the drug classes and format the variables
 ##    b) Characteristics table
 ##    c) Impute missing data
-## 2) Model predictions for each drug class, in three versions:
+## 2) Model predictions for each drug class, in four versions:
 ##    a) original predictions
-##    b) recalibration-in-the-large (a drug-specific intercept)
-##    c) recalibration (a drug-specific intercept and slope)
+##    b) minimal recalibration-in-the-large (a drug-specific intercept, only where
+##       it is beyond 1.5 mmol/mol)
+##    c) recalibration-in-the-large (a drug-specific intercept)
+##    d) recalibration (a drug-specific intercept and slope)
 ## 3) Figure code (needs to be run; no need to read it)
 ## 4) Validation:
 ##    a) pairwise drug calibration (and semaglutide vs each GLP1 subtype), overall
 ##       benefit calibration, predicted vs observed calibration and predicted
 ##       optimal therapy
 ##    b) save the figures. The files sort by version of the predictions:
-##         1_original_..., 2_recalibration_in_the_large_..., 3_recalibration_...,
+##         1_original_..., 2_minimal_recalibration_in_the_large_...,
+##         3_recalibration_in_the_large_..., 4_recalibration_...,
 ##       and within each, by figure: 01_pairwise, 02_overall, 03_overall_by_drug,
 ##       04_loveplot, 05_pred_obs, 06_rank1, 07_tolerance3. Then the summaries
-##       (4_summary_...).
+##       (5_summary_...).
 
 
 #############################################################################
@@ -168,7 +172,7 @@ glp1_lookup <- setNames(rep(names(glp1_subtypes), lengths(glp1_subtypes)),
 
 # set up dataset (cohort cached by 01.cohort_scripts.R)
 analysis_raw <- analysis_raw %>%
-  analysis$cached("ethnicity") %>%
+  analysis$cached("20261113_ethnicity") %>%
   filter(dstartdate >= cohort_start | drug_substance %in% sema_substances) %>%
   # select variables needed (to shorten the load time)
   select(
@@ -355,7 +359,7 @@ write.csv(
 # Part 1c: Impute missing data ----
 
 # Imputation of missing data can be performed using multiple imputation methods
-# The following code generates m=20 imputed datasets and then averages the imputed values
+# The following code generates m=10 imputed datasets and then averages the imputed values
 # to create a single complete dataset with mean imputed values for originally missing data
 
 # Example imputation code (using mice package):
@@ -378,8 +382,8 @@ data_for_imputation <- analysis_dataset[, vars_to_impute]
 # Identify which values are missing in the dataset to be imputed
 missing_indicator <- is.na(data_for_imputation)
 
-# Perform multiple imputation (m=20 imputed datasets)
-mice_m = 3; mice_maxit = 3
+# Perform multiple imputation (m=10 imputed datasets)
+mice_m = 10; mice_maxit = 20
 imputed_data <- mice(data_for_imputation, m = mice_m, method = 'pmm', maxit = mice_maxit, seed = 500, printFlag = TRUE)
 
 # Extract all imputed datasets and calculate mean of imputed values
@@ -407,14 +411,24 @@ for (var in vars_to_exclude) {
 
 analysis_dataset <- analysis_dataset_complete
 
+# Each imputed dataset, with the excluded variables added back, for the model
+# predictions (Part 2). These have the same rows, in the same order, as analysis_dataset.
+imputed_list <- lapply(1:mice_m, function(i) {
+  imputed <- complete(imputed_data, action = i)
+  for (var in vars_to_exclude) {
+    imputed[[var]] <- analysis_dataset[[var]]
+  }
+  imputed
+})
+
 # The cohort is restricted to this script's drug classes only now, after
 # imputation on the full cohort with both semaglutide forms (so
 # imputed values are the same in the oral and injectable semaglutide scripts),
 # and initiations with a missing outcome HbA1c are dropped
-analysis_dataset <- analysis_dataset %>%
-  filter(drugclass %in% drugs) %>%
-  mutate(drugclass = factor(drugclass, levels = drugs)) %>%
-  filter(!is.na(posthba1cfinal))
+keep <- analysis_dataset$drugclass %in% drugs & !is.na(analysis_dataset$posthba1cfinal)
+analysis_dataset <- analysis_dataset[keep, ] %>%
+  mutate(drugclass = factor(drugclass, levels = drugs))
+imputed_list <- lapply(imputed_list, function(imputed) imputed[keep, ])
 
 cat(new_drug, "cohort:", nrow(analysis_dataset), "initiations\n")
 table(analysis_dataset$drugclass)
@@ -445,25 +459,25 @@ library(rms)
 # load model
 load("Model_files/fivedrugmodel_5knot_share_20230823.Rdata") # m1.5.final
 
-# the model needs a data.frame (not a tibble) to make predictions
-analysis_dataset <- as.data.frame(analysis_dataset)
+# Each patient's own deprivation (imd5) and hba1cmonth are used.
+# (the model needs a data.frame, not a tibble)
+prediction_list <- lapply(imputed_list, as.data.frame)
 
-# Generate predictions
-analysis_dataset <- analysis_dataset %>%
-  mutate(
-    pred.SGLT2 = predict(m1.5.final, newdata = analysis_dataset %>% mutate(drugclass = "SGLT2")),
-    pred.GLP1 = predict(m1.5.final, newdata = analysis_dataset %>% mutate(drugclass = "GLP1")),
-    pred.DPP4 = predict(m1.5.final, newdata = analysis_dataset %>% mutate(drugclass = "DPP4")),
-    pred.SU = predict(m1.5.final, newdata = analysis_dataset %>% mutate(drugclass = "SU")),
-    pred.TZD = predict(m1.5.final, newdata = analysis_dataset %>% mutate(drugclass = "TZD"))
-  )
+# Published model, for each of its 5 drug classes: predicted in each imputed
+# dataset and averaged across them
+for (drug in c("SGLT2", "GLP1", "DPP4", "SU", "TZD")) {
+  analysis_dataset[[paste0("pred.", drug)]] <- rowMeans(sapply(prediction_list, function(prediction_data) {
+    as.numeric(predict(m1.5.final, newdata = prediction_data %>% mutate(drugclass = drug)))
+  }))
+}
 
 # Apply the post-2020 update estimated in
-# 01.Temporal_Update/02.calibration_new_data_post2020.R: an intercept for each drug
-# class, the GLP1 subtypes included, on top of the published model's prediction
-# of its base drug class (GLP1 for the GLP1 subtypes)
+# 01.Temporal_Update/02.calibration_new_data_post2020.R (minimal
+# recalibration-in-the-large): an intercept for each drug class, the GLP1 subtypes
+# included (0 where it was not beyond minimal_threshold), on top of the published
+# model's prediction of its base drug class (GLP1 for the GLP1 subtypes)
 #   updated prediction = pred.<base_drugclass> + intercept
-model_update <- readRDS("Model_files/model_update_recal_large.rds")
+model_update <- readRDS("Model_files/model_update_recal_minimal.rds")
 print(model_update)
 
 for (i in seq_len(nrow(model_update))) {
@@ -477,7 +491,7 @@ analysis_dataset[[paste0("pred.", new_drug)]] <- analysis_dataset[[paste0("pred.
 
 
 ## We then generate versions of the predictions that are recalibrated using intercept-only
-## and intercept + slope adjustments.
+## (only those beyond minimal_threshold, or all) and intercept + slope adjustments.
 
 ### Recalibration
 # drugs and model_drugs (new_drug plus the model drug classes, with the GLP1
@@ -496,17 +510,21 @@ drug_colours <- c("SGLT2" = "#E69F00", "Dulaglutide" = "#56B4E9", "Liraglutide" 
                   "DPP4" = "#0072B2", "SU" = "#CC79A7", "TZD" = "#D55E00",
                   "Oral_Semaglutide" = "#56B4E9", "Inje_Semaglutide" = "#56B4E9")
 
-# Optional prognostic factors (leave empty if none). These are variables that
-# affect the outcome irrespective of treatment, so they enter as a single overall
-# (treatment-independent) effect: a shared main effect in the recalibration models
-# below, plus covariate adjustment in the pairwise analysis and matching in the
-# overall-benefit analysis (via matching_vars_prog).
+# Optional prognostic factors (leave empty if none): variables that affect the
+# outcome whatever the treatment. They get one shared coefficient in
+# recalibration-in-the-large and recalibration (not minimal), and are adjusted and
+# matched on in every version, the original included.
 prognostic_vars <- c()
 prognostic_terms <- if (length(prognostic_vars) > 0) {
   paste0(" + ", paste(prognostic_vars, collapse = " + "))
 } else {
   ""
 }
+
+# Minimal recalibration-in-the-large uses new_drug's intercept only when it is
+# beyond minimal_threshold (mmol/mol): half the clinically relevant difference (3
+# mmol/mol).
+minimal_threshold <- 1.5
 
 # summarising function: tidy a fitted lm into a coefficient table
 summarize_lm <- function(fit, model_type) {
@@ -609,6 +627,24 @@ for (drug in drugs) {
 }
 recalib_recal_large_params <- label_new_drug_terms(summarize_lm(fit_recal_large, "recal_large"))
 
+#### Minimal recalibration-in-the-large (new_drug intercept beyond minimal_threshold, no prognostic factors)
+# Its own fit without prognostic_vars, so the decision does not depend on how they
+# are coded. new_drug takes its intercept only when the estimate is beyond
+# minimal_threshold; otherwise it keeps its original prediction (the published
+# GLP1 prediction).
+fit_recal_minimal <- lm(as.formula(paste0(outcome_var, " ~ 0 + new_ind + offset(pred_assigned)")),
+                        data = recal_data)
+intercept_recal_minimal <- unname(coef(fit_recal_minimal)["new_ind"])
+accepted <- abs(intercept_recal_minimal) > minimal_threshold
+for (drug in drugs) {
+  analysis_dataset[[paste0("pred.recal_minimal.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]] +
+    if (drug == new_drug && accepted) intercept_recal_minimal else 0
+}
+cat("Minimal recalibration-in-the-large: intercept", if (accepted) "used" else "not used",
+    "for", new_drug, "(", round(intercept_recal_minimal, 2), "mmol/mol )\n")
+recalib_recal_minimal_params <- label_new_drug_terms(summarize_lm(fit_recal_minimal, "recal_minimal")) %>%
+  mutate(accepted = abs(estimate) > minimal_threshold)
+
 #### Recalibration (new_drug intercept & slope, shared prognostic effect)
 formula_recal <- as.formula(
   paste0(outcome_var, " ~ 0 + new_ind + new_pred", prognostic_terms, " + offset(fixed_pred)")
@@ -619,32 +655,16 @@ for (drug in drugs) {
 }
 recalib_recal_params <- label_new_drug_terms(summarize_lm(fit_recal, "recal"))
 
-#### Original predictions adjusted for prognostic factors
-# Computed last, so the recalibrations above use the raw predictions as their base.
-# The model's own prediction is kept (offset, coefficient 1) and only a shared
-# coefficient per prognostic factor is added, shifting every drug equally: this
-# moves the absolute predictions (and the predicted-vs-observed calibration) but
-# leaves every between-drug benefit unchanged. The original pred.<drug> columns are
-# overwritten so the rest of the script uses them directly. With prognostic_vars
-# empty the predictions are returned unchanged.
-formula_original <- as.formula(
-  paste0(outcome_var, " ~ 0", prognostic_terms, " + offset(pred_assigned)")
-)
-fit_original <- lm(formula_original, data = recal_data)
-for (drug in model_drugs) {
-  analysis_dataset[[paste0(pred_prefix, drug)]] <- predict_for_drug(fit_original, drug)
-}
-recalib_original_params <- summarize_lm(fit_original, "original")
-
 # drug classes not in drugs have no data to be recalibrated, so they keep their
 # original predictions
 for (drug in setdiff(model_drugs, drugs)) {
+  analysis_dataset[[paste0("pred.recal_minimal.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]]
   analysis_dataset[[paste0("pred.recal_large.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]]
   analysis_dataset[[paste0("pred.recal.", drug)]] <- analysis_dataset[[paste0(pred_prefix, drug)]]
 }
 
 # Combine and save recalibration parameters
-recalib_params_full <- bind_rows(recalib_original_params, recalib_recal_large_params, recalib_recal_params)
+recalib_params_full <- bind_rows(recalib_recal_minimal_params, recalib_recal_large_params, recalib_recal_params)
 
 write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.csv"))
 
@@ -657,7 +677,8 @@ write_csv(recalib_params_full, paste0(output_path, "/recalibration_params_full.c
 # recalibration step also reports the slope of new_drug's prediction on the
 # published GLP1 prediction (1 for the published GLP1 prediction and the GLP1
 # subtypes, so the same against every reference).
-# The original step is the published GLP1 prediction, so it has no CI. The GLP1
+# The original step is the published GLP1 prediction, so it has no CI, and so is
+# the minimal step when new_drug's intercept is not used. The GLP1
 # subtype intercepts are fixed, so they shift the difference and its CI. Shared
 # prognostic factors (prognostic_vars) move every drug class equally and are
 # left out.
@@ -707,6 +728,7 @@ compare_new_drug <- function(fit, step) {
 
 new_drug_comparison <- bind_rows(
   compare_new_drug(NULL, "original"),
+  compare_new_drug(if (accepted) fit_recal_minimal else NULL, "recal_minimal"),
   compare_new_drug(fit_recal_large, "recal_large"),
   compare_new_drug(fit_recal, "recal")
 )
@@ -714,9 +736,11 @@ print(new_drug_comparison)
 
 write_csv(new_drug_comparison, paste0(output_path, "/recalibration_", new_drug, "_vs_glp1.csv"))
 
-# Save the recalibration-in-the-large update for the new drug class so it can
-# be applied to the model in other analyses. Only new_drug is saved: the
-# model drug classes keep the post-2020 update (01.Temporal_Update/Data).
+# Save the update for the new drug class so it can be applied to the model in
+# other analyses. Only new_drug is saved: the model drug classes keep the
+# post-2020 update (01.Temporal_Update/Data). The update is the minimal
+# recalibration-in-the-large (the intercept if beyond minimal_threshold, 0
+# otherwise).
 #   intercept:     on top of the published model's prediction of base_drug
 #                  updated prediction = pred.<base_drugclass> (published) + intercept
 #   intercept_vs_<GLP1 subtype>: for reporting, the same update relative to that
@@ -726,24 +750,30 @@ write_csv(new_drug_comparison, paste0(output_path, "/recalibration_", new_drug, 
 data_path <- "Scripts/03.Semaglutide_Update/Data"
 dir.create(data_path, showWarnings = FALSE, recursive = TRUE)
 
-model_update_new_drug <- recalib_recal_large_params %>%
-  filter(term == paste0("drugclass", new_drug)) %>%
-  transmute(
-    drugclass      = new_drug,
-    base_drugclass = base_drug,
-    intercept      = round(estimate, 3)
-  )
-
-for (subtype in names(glp1_subtypes)) {
-  model_update_new_drug[[paste0("intercept_vs_", subtype)]] <- round(
-    model_update_new_drug$intercept - model_update$intercept[model_update$drugclass == subtype], 3
-  )
+# helper: the update of new_drug from a table of fitted parameters (intercepts
+# not used set to 0 beforehand), with its difference from each GLP1 subtype
+new_drug_update <- function(params) {
+  update <- params %>%
+    filter(term == paste0("drugclass", new_drug)) %>%
+    transmute(
+      drugclass      = new_drug,
+      base_drugclass = base_drug,
+      intercept      = round(estimate, 3)
+    )
+  for (subtype in names(glp1_subtypes)) {
+    update[[paste0("intercept_vs_", subtype)]] <- round(
+      update$intercept - model_update$intercept[model_update$drugclass == subtype], 3
+    )
+  }
+  update
 }
 
-print(model_update_new_drug)
-
-saveRDS(model_update_new_drug,
-        paste0(data_path, "/model_update_recal_large_", new_drug, ".rds"))
+model_update_new_drug_minimal <- new_drug_update(
+  recalib_recal_minimal_params %>% mutate(estimate = ifelse(accepted, estimate, 0))
+)
+print(model_update_new_drug_minimal)
+saveRDS(model_update_new_drug_minimal,
+        paste0(data_path, "/model_update_recal_minimal_", new_drug, ".rds"))
 
 
 # Part 3: Figure code ----------------------------------------------------------
@@ -1123,6 +1153,13 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
   dropped <- as.character(pairs_per_drug$index_drug[pairs_per_drug$n_pairs < min_pairs])
   by_drug <- by_drug %>% filter(!(as.character(index_drug) %in% dropped))
 
+  # no drug class with enough pairs: no figure (nothing is saved)
+  if (nrow(by_drug) == 0) {
+    message("Overall benefit by recommended drug class not drawn: no drug class with ", min_pairs,
+            " or more pairs (", paste(pairs_per_drug$index_drug, pairs_per_drug$n_pairs, collapse = ", "), ")")
+    return(NULL)
+  }
+
   panel_size <- 3.4
   panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
   n_panels   <- length(panel_drugs)
@@ -1174,7 +1211,7 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
 
 # helpers: save the overall benefit figures
 save_overall <- function(fig, file) save_plot(fig, file, panel_width = 4.2, panel_height = 4.2)
-save_overall_by_drug <- function(fig, file) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
+save_overall_by_drug <- function(fig, file) if (!is.null(fig)) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
 
 
 ## Predicted vs observed figure ----
@@ -1468,12 +1505,13 @@ cal_groups = c(3, 5, 10) # Number of groups to stratify predictions into
 # - adjustment_var: baseline covariates to adjust for in the pairwise calibration
 #   models. These should match the variables used in original model development.
 #   Any additional prognostic factors go in prognostic_vars (above) and are added
-#   on top (as an overall, treatment-independent effect) in the prognostic-adjusted
-#   and recalibrated versions.
+#   on top (as an overall, treatment-independent effect) in every version of the
+#   predictions (adjustment_vars_prog), the original included.
 
 adjustment_vars = c("t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
                      "preegfr", "pretotalcholesterol", "prehdl", "hba1cmonth",
                      "sex", "smoke", "ncurrtx", "drugline", "imd5")
+adjustment_vars_prog <- unique(c(adjustment_vars, prognostic_vars))
 
 # - Pairwise figures: the drug classes of the analysis against each other, and
 #   new_drug against each of them plus one panel per GLP1 subtype. New_drug and a
@@ -1492,7 +1530,7 @@ pairwise_calibration_for <- function(analysis, prefix) {
     prediction_vars = paste0(prefix, analysis$drugs),
     outcome_var = outcome_var,
     cal_groups = cal_groups,  # Number of groups to stratify predictions into
-    adjustment_var = unique(c(adjustment_vars, prognostic_vars))
+    adjustment_var = adjustment_vars_prog
   )
 }
 
@@ -1521,7 +1559,7 @@ pairwise_calibration_glp1 <- function(prefix) {
       prediction_vars = paste0(prefix, pair_drugs),
       outcome_var = outcome_var,
       cal_groups = 1,
-      adjustment_var = unique(c(adjustment_vars, prognostic_vars))
+      adjustment_var = adjustment_vars_prog
     )
   })
 }
@@ -1571,6 +1609,11 @@ pairwise_results_original <- pairwise_calibration_step("pred.")
 plot_pairwise_original    <- plot_pairwise_figures(pairwise_results_original, "original predictions")
 
 
+### Minimal recalibration-in-the-large predictions
+pairwise_results_recal_minimal <- pairwise_calibration_step("pred.recal_minimal.")
+plot_pairwise_recal_minimal    <- plot_pairwise_figures(pairwise_results_recal_minimal, "minimal recalibration-in-the-large")
+
+
 ### Recalibration-in-the-large predictions
 pairwise_results_recal_large <- pairwise_calibration_step("pred.recal_large.")
 plot_pairwise_recal_large    <- plot_pairwise_figures(pairwise_results_recal_large, "recalibration-in-the-large")
@@ -1594,28 +1637,44 @@ plot_pairwise_recal    <- plot_pairwise_figures(pairwise_results_recal, "recalib
 # - Points above the red line indicate underprediction (observed benefit greater than predicted)
 # - Points below the red line indicate overprediction (observed benefit less than predicted)
 
-# Covariates used to match concordant and discordant patients. Matching is 1:1
-# with replacement and exact on the predicted-best drug (done inside the
-# function; the best drug is chosen from new_drug and comparator_drugs), with
-# a 0.4 SD caliper on baseline HbA1c. These are baseline
+# Covariates whose balance is checked (love plots). These are baseline
 # characteristics only: unlike adjustment_vars above, hba1cmonth (time to
 # outcome measurement) describes the outcome window rather than the patient at
-# baseline, so it is left out of matching.
-matching_vars <- c(
+# baseline, so it is left out.
+balance_vars <- c(
   "t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
   "preegfr", "pretotalcholesterol", "prehdl",
   "sex", "smoke", "ncurrtx", "drugline", "imd5"
 )
+
+# Covariates used to match concordant and discordant patients: the strongest
+# predictors of the outcome, as in 00.V1_Validation/02.validation_v1_post2020.R.
+# Matching is 1:1 with replacement and exact on the predicted-best drug (done
+# inside the function; the best drug is chosen from the analysis's model_drugs),
+# with a 0.4 SD caliper on baseline HbA1c, in both directions.
+matching_vars <- c("prehba1c", "prebmi", "t2dmduration", "agetx", "preegfr", "drugline", "ncurrtx")
+
+# Discordant-as-treated direction only, for every version of the predictions:
+# each concordant patient is used at most 3 times (in random order), matches are
+# exact on drug line and number of current drugs, and BMI, duration and age must
+# be within 0.5 SD.
+match_args_disc <- list(
+  caliper = c(prehba1c = 0.4, prebmi = 0.5, t2dmduration = 0.5, agetx = 0.5),
+  exact = c("drugline", "ncurrtx"),
+  reuse.max = 3, m.order = "random"
+)
+
 # The same covariates plus any prognostic factors in prognostic_vars. Used for
-# matching in every version of the predictions (the prognostic factor is a
-# cross-cutting control, not a version of its own); equal to matching_vars until you populate
-# prognostic_vars.
+# matching in every version of the predictions, the original included (the prognostic
+# factor is a cross-cutting control, not a version of its own); equal to matching_vars
+# until you populate prognostic_vars.
 matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
+balance_vars_prog  <- unique(c(balance_vars, prognostic_vars))
 
 # Confidence intervals: FALSE uses fast analytical intervals; set to TRUE for
 # pair-level bootstrap intervals (slower) that account for matching with
 # replacement.
-use_bootstrap <- TRUE
+use_bootstrap <- FALSE
 n_boot <- 1000
 boot_seed <- 42
 
@@ -1652,12 +1711,18 @@ love_labels <- c(
 )
 
 # Balance (love) plot of one matching: absolute standardised mean
-# difference per matching covariate, before and after matching, in each
-# matching direction. Exact-matched variables are left out.
+# difference per covariate of balance_vars (also those not matched on), before
+# and after matching, in each matching direction.
 plot_loveplot <- function(match_obj) {
 
-  love_conc <- summary(match_obj$matchit$concordant)
-  love_disc <- summary(match_obj$matchit$discordant)
+  love_summary <- function(m) {
+    left_out <- setdiff(match_obj$balance_vars, names(m$X))
+    if (length(left_out) > 0) m$X <- cbind(m$X, as.data.frame(match_obj$data)[, left_out, drop = FALSE])
+    m$X <- m$X[, c(setdiff(names(m$X), match_obj$balance_vars), match_obj$balance_vars), drop = FALSE]
+    summary(m)
+  }
+  love_conc <- love_summary(match_obj$matchit$concordant)
+  love_disc <- love_summary(match_obj$matchit$discordant)
 
   love_n <- c(
     "Concordant as treated" = nrow(match_obj$concordant),
@@ -1730,9 +1795,10 @@ plot_loveplot <- function(match_obj) {
 # helper: match concordant vs discordant patients of an analysis, with the
 # predictions with the given prefix (returns the concordant, discordant and
 # combined matched populations, plus the matchit objects for love plots).
-# match_args_disc changes the matching in the discordant-as-treated direction.
-match_pairs <- function(analysis, prefix, match_args_disc = list()) {
-  cateval::match_benefit_pairs(
+# The same matching for every version of the predictions; change it above
+# (matching_vars, match_args_disc), e.g. if a love plot shows poor balance.
+match_pairs <- function(analysis, prefix) {
+  matched <- cateval::match_benefit_pairs(
     data = analysis$data,
     drug_var = "drugclass",
     outcome_var = outcome_var,
@@ -1742,14 +1808,20 @@ match_pairs <- function(analysis, prefix, match_args_disc = list()) {
     match_args_disc = match_args_disc,
     seed = 19840503
   )
+  # every patient is matched on (no rows dropped), so the love plot can add the
+  # covariates of balance_vars that are not matched on
+  stopifnot(length(matched$matchit$concordant$treat) == nrow(analysis$data))
+  matched$data <- analysis$data
+  matched$balance_vars <- balance_vars_prog
+  matched
 }
 
 # helper: overall benefit calibration of an analysis, with the predictions with
 # the given prefix (title_suffix ends the figure titles). Returns the matched
 # pairs, the mean observed benefit of following the model, the calibration
 # slope / intercept and the figures.
-overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = list()) {
-  matched <- match_pairs(analysis, prefix, match_args_disc)
+overall_benefit <- function(analysis, prefix, title_suffix) {
+  matched <- match_pairs(analysis, prefix)
 
   # group the matched pairs by predicted benefit (each cal_groups setting), for each population
   deciles_conc <- cateval::benefit_by_group(matched$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
@@ -1778,44 +1850,37 @@ overall_benefit <- function(analysis, prefix, title_suffix, match_args_disc = li
   )
 }
 
-# Matching for every version: stricter in the discordant-as-treated direction
-# (extra calipers, exact on drug line and number of current drugs, each patient
-# reused at most 3 times). The original predictions are those of the updated
-# model, so they are matched in the same way as the two recalibrated versions.
-match_args_disc_recal <- list(
-  caliper = c(prehba1c = 0.4, prebmi = 0.5, t2dmduration = 0.5, agetx = 0.5),
-  exact = c("drugline", "ncurrtx"),
-  reuse.max = 3, m.order = "random")
-
-
 ### Original predictions ----
 
-benefit_original <- overall_benefit(main, "pred.", " (original predictions)",
-                                    match_args_disc = match_args_disc_recal)
+benefit_original <- overall_benefit(main, "pred.", " (original predictions)")
+
+
+### Minimal recalibration-in-the-large predictions ----
+
+benefit_recal_minimal <- overall_benefit(main, "pred.recal_minimal.", " (minimal recalibration-in-the-large)")
 
 
 ### Recalibration-in-the-large predictions ----
 
-benefit_recal_large <- overall_benefit(main, "pred.recal_large.", " (recalibration-in-the-large)",
-                                       match_args_disc = match_args_disc_recal)
+benefit_recal_large <- overall_benefit(main, "pred.recal_large.", " (recalibration-in-the-large)")
 
 
 ### Recalibration predictions ----
 
-benefit_recal <- overall_benefit(main, "pred.recal.", " (recalibration)",
-                                 match_args_disc = match_args_disc_recal)
+benefit_recal <- overall_benefit(main, "pred.recal.", " (recalibration)")
 
 
 ### Compare the overall benefit estimate across model versions ----
 
 benefit_estimates <- bind_rows(
   benefit_original$overall %>% mutate(model = "Original"),
+  benefit_recal_minimal$overall %>% mutate(model = "Minimal recalibration-in-the-large"),
   benefit_recal_large$overall %>% mutate(model = "Recalibration-in-the-large"),
   benefit_recal$overall %>% mutate(model = "Recalibration")
 ) %>%
   mutate(model = factor(
     model,
-    levels = c("Original", "Recalibration-in-the-large", "Recalibration")
+    levels = c("Original", "Minimal recalibration-in-the-large", "Recalibration-in-the-large", "Recalibration")
   ))
 
 # helper: plot of the overall benefit estimates of one analysis (its label as
@@ -1830,7 +1895,7 @@ plot_benefit_estimates <- function(estimates, plot_title, analysis_label) {
 
 ## Predicted vs observed HbA1c (the outcome HbA1c: at 12 months, or at 6 months
 ## when the 12-month value is missing) of every initiation (every drug class
-## of the cohort), with the prediction for the drug class initiated. The three
+## of the cohort), with the prediction for the drug class initiated. The four
 ## figures have the same axes, so the versions of the predictions can be compared.
 
 ## Interpretation of plots:
@@ -1846,11 +1911,14 @@ pred_obs_data_of <- function(prefix) {
   pred_obs_data
 }
 
-# the same axes in the three figures: the ranges in the three versions
-pred_obs_axis_limits <- pred_obs_limits(lapply(c("pred.", "pred.recal_large.", "pred.recal."), pred_obs_data_of))
+# the same axes in the four figures: the ranges in the four versions
+pred_obs_axis_limits <- pred_obs_limits(lapply(c("pred.", "pred.recal_minimal.", "pred.recal_large.", "pred.recal."),
+                                               pred_obs_data_of))
 
 plot_pred_obs_original    <- draw_pred_obs(pred_obs_data_of("pred."), drugs, "Predicted vs Observed",
                                            "Original predictions", limits = pred_obs_axis_limits)
+plot_pred_obs_recal_minimal <- draw_pred_obs(pred_obs_data_of("pred.recal_minimal."), drugs, "Predicted vs Observed",
+                                             "Minimal recalibration-in-the-large", limits = pred_obs_axis_limits)
 plot_pred_obs_recal_large <- draw_pred_obs(pred_obs_data_of("pred.recal_large."), drugs, "Predicted vs Observed",
                                            "Recalibration-in-the-large", limits = pred_obs_axis_limits)
 plot_pred_obs_recal       <- draw_pred_obs(pred_obs_data_of("pred.recal."), drugs, "Predicted vs Observed",
@@ -1862,7 +1930,8 @@ plot_pred_obs_recal       <- draw_pred_obs(pred_obs_data_of("pred.recal."), drug
 ## Clinical Decision Analysis: Does Recalibration Change Treatment Recommendations?
 ##
 ## This section compares the predicted optimal drug (rank 1 best predicted benefit) across
-## different prediction approaches (original, intercept recalibrated, and intercept+slope recalibrated).
+## different prediction approaches (original, minimal intercept recalibrated, intercept recalibrated,
+## and intercept+slope recalibrated).
 ## Changes in optimal drug recommendations between models indicate that recalibration alters
 ## clinical decision-making for individual patients. This helps identify whether calibration
 ## adjustments have meaningful clinical implications beyond just improving prediction accuracy.
@@ -1931,6 +2000,10 @@ plot_tolerance3_added_removed <- function(analysis, prefix, step_title) {
 
 ### Original predictions
 plot_rank1_original <- plot_rank1(main, "pred.", "Original predictions")
+
+### Minimal recalibration-in-the-large predictions
+plot_rank1_recal_minimal      <- plot_rank1(main, "pred.recal_minimal.", "Minimal recalibration-in-the-large")
+plot_tolerance3_recal_minimal <- plot_tolerance3_added_removed(main, "pred.recal_minimal.", "Minimal recalibration-in-the-large")
 
 ### Recalibration-in-the-large predictions
 plot_rank1_recal_large      <- plot_rank1(main, "pred.recal_large.", "Recalibration-in-the-large")
@@ -2003,16 +2076,17 @@ summarise_concordance <- function(analysis, prefix, approach) {
 }
 
 concordance_summary <- bind_rows(
-  summarise_concordance(main, "pred.",             "original"),
-  summarise_concordance(main, "pred.recal_large.", "recal_large"),
-  summarise_concordance(main, "pred.recal.",       "recal")
+  summarise_concordance(main, "pred.",               "original"),
+  summarise_concordance(main, "pred.recal_minimal.", "recal_minimal"),
+  summarise_concordance(main, "pred.recal_large.",   "recal_large"),
+  summarise_concordance(main, "pred.recal.",         "recal")
 )
 
 print(concordance_summary)
 
 write_csv(
   concordance_summary,
-  paste0(output_path, "/4_summary_concordance_by_drug.csv")
+  paste0(output_path, "/5_summary_concordance_by_drug.csv")
 )
 
 
@@ -2022,16 +2096,19 @@ write_csv(
 
 ## The figures are saved for each version of the predictions in turn:
 ##   1) Original: does the model's predicted benefit calibrate as it is?
-##   2) Recalibration-in-the-large: does it calibrate with a drug-specific
+##   2) Minimal recalibration-in-the-large: does it calibrate with the drug-specific
+##      intercept beyond minimal_threshold?
+##   3) Recalibration-in-the-large: does it calibrate with a drug-specific
 ##      intercept correction?
-##   3) Recalibration: does it calibrate with a drug-specific intercept and slope
+##   4) Recalibration: does it calibrate with a drug-specific intercept and slope
 ##      correction?
-## The files sort in the same order (1_original_..., 2_recalibration_in_the_large_...,
-## 3_recalibration_...), then the summaries (4_summary_...).
+## The files sort in the same order (1_original_..., 2_minimal_recalibration_in_the_large_...,
+## 3_recalibration_in_the_large_..., 4_recalibration_...), then the summaries (5_summary_...).
 ##
 ## The prognostic factor (prognostic_vars) is a cross-cutting control applied
-## within every version when identified - adjusted for in the pairwise analysis
-## and matched on in the overall-benefit analysis - not a version of its own.
+## within every version, the original included, when identified - adjusted for in
+## the pairwise analysis and matched on in the overall-benefit analysis - not a
+## version of its own.
 
 # helper: save the pairwise and overall benefit figures of one version of the predictions (file names
 # start with file_stem)
@@ -2054,56 +2131,22 @@ save_step_figures("1_original", plot_pairwise_original, benefit_original)
 save_pred_obs(plot_pred_obs_original, paste0(output_path, "/1_original_05_pred_obs.pdf"))
 
 
-## 2) Recalibration-in-the-large ----
+## 2) Minimal recalibration-in-the-large ----
 
-save_step_figures("2_recalibration_in_the_large", plot_pairwise_recal_large, benefit_recal_large)
-save_pred_obs(plot_pred_obs_recal_large, paste0(output_path, "/2_recalibration_in_the_large_05_pred_obs.pdf"))
-
-
-## 3) Recalibration ----
-
-save_step_figures("3_recalibration", plot_pairwise_recal, benefit_recal)
-save_pred_obs(plot_pred_obs_recal, paste0(output_path, "/3_recalibration_05_pred_obs.pdf"))
+save_step_figures("2_minimal_recalibration_in_the_large", plot_pairwise_recal_minimal, benefit_recal_minimal)
+save_pred_obs(plot_pred_obs_recal_minimal, paste0(output_path, "/2_minimal_recalibration_in_the_large_05_pred_obs.pdf"))
 
 
-## Save the overall-benefit plot components, matched pairs and pairwise results ----
-# The individual panels are saved rather than the assembled patchworks, so any
-# combination of version of the predictions / matched population can be put together
-# later without re-running this script. Of the matched pairs only the columns
-# needed to regroup them are kept, so groups can be recomputed later without
-# repeating any matching. The pairwise results are group-level summaries (the
-# pooled new_drug vs GLP1 subtype estimates included), so the drug-pair panels
-# can be redrawn later.
+## 3) Recalibration-in-the-large ----
 
-slim_pairs <- function(pairs) {
-  pairs %>%
-    transmute(
-      index_drug      = as.character(index_drug),
-      concordant_drug = as.character(concordant_drug),
-      discordant_drug = as.character(discordant_drug),
-      pred.benefit,
-      obs.benefit
-    )
-}
+save_step_figures("3_recalibration_in_the_large", plot_pairwise_recal_large, benefit_recal_large)
+save_pred_obs(plot_pred_obs_recal_large, paste0(output_path, "/3_recalibration_in_the_large_05_pred_obs.pdf"))
 
-benefits <- list(original = benefit_original, recal_large = benefit_recal_large, recal = benefit_recal)
 
-saveRDS(
-  lapply(benefits, function(b) list(conc = b$plot_conc, disc = b$plot_disc, both = b$plot_both)),
-  paste0(output_path, "/overall_benefit_plots.rds")
-)
-saveRDS(
-  lapply(benefits, function(b) list(
-    conc = slim_pairs(b$matched$concordant),
-    disc = slim_pairs(b$matched$discordant),
-    both = slim_pairs(b$matched$combined)
-  )),
-  paste0(output_path, "/overall_benefit_pairs.rds")
-)
-saveRDS(
-  list(original = pairwise_results_original, recal_large = pairwise_results_recal_large, recal = pairwise_results_recal),
-  paste0(output_path, "/pairwise_results.rds")
-)
+## 4) Recalibration ----
+
+save_step_figures("4_recalibration", plot_pairwise_recal, benefit_recal)
+save_pred_obs(plot_pred_obs_recal, paste0(output_path, "/4_recalibration_05_pred_obs.pdf"))
 
 
 ## Additional Analyses: Clinical Decision Analysis ----
@@ -2115,20 +2158,23 @@ save_decision_plot <- function(plot, file_stem) {
 
 save_decision_plot(plot_rank1_original, "1_original_06_rank1")
 
-save_decision_plot(plot_rank1_recal_large, "2_recalibration_in_the_large_06_rank1")
-save_decision_plot(plot_tolerance3_recal_large, "2_recalibration_in_the_large_07_tolerance3")
+save_decision_plot(plot_rank1_recal_minimal, "2_minimal_recalibration_in_the_large_06_rank1")
+save_decision_plot(plot_tolerance3_recal_minimal, "2_minimal_recalibration_in_the_large_07_tolerance3")
 
-save_decision_plot(plot_rank1_recal, "3_recalibration_06_rank1")
-save_decision_plot(plot_tolerance3_recal, "3_recalibration_07_tolerance3")
+save_decision_plot(plot_rank1_recal_large, "3_recalibration_in_the_large_06_rank1")
+save_decision_plot(plot_tolerance3_recal_large, "3_recalibration_in_the_large_07_tolerance3")
+
+save_decision_plot(plot_rank1_recal, "4_recalibration_06_rank1")
+save_decision_plot(plot_tolerance3_recal, "4_recalibration_07_tolerance3")
 
 save_benefit_estimates(plot_benefit_estimates(benefit_estimates, "Overall benefit estimates", main$label),
-                       paste0(output_path, "/4_summary_overall_benefit_estimates.pdf"))
+                       paste0(output_path, "/5_summary_overall_benefit_estimates.pdf"))
 
 # table of the average overall benefit per version of the predictions (estimate and 95% CI)
 write.csv(
   benefit_estimates %>%
     select(model, estimate = observed, lower_ci = lower.ci, upper_ci = upper.ci, n_pairs = n),
-  paste0(output_path, "/4_summary_overall_benefit_estimates.csv"),
+  paste0(output_path, "/5_summary_overall_benefit_estimates.csv"),
   row.names = FALSE
 )
 
@@ -2137,10 +2183,11 @@ write.csv(
 write.csv(
   bind_rows(
     benefit_original$calibration %>% mutate(model = "Original"),
+    benefit_recal_minimal$calibration %>% mutate(model = "Minimal recalibration-in-the-large"),
     benefit_recal_large$calibration %>% mutate(model = "Recalibration-in-the-large"),
     benefit_recal$calibration %>% mutate(model = "Recalibration")
   ) %>%
     select(model, metric, estimate, lower_ci = lower.ci, upper_ci = upper.ci),
-  paste0(output_path, "/4_summary_benefit_calibration.csv"),
+  paste0(output_path, "/5_summary_benefit_calibration.csv"),
   row.names = FALSE
 )
