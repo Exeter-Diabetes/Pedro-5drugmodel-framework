@@ -1120,6 +1120,13 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
   dropped <- as.character(pairs_per_drug$index_drug[pairs_per_drug$n_pairs < min_pairs])
   by_drug <- by_drug %>% filter(!(as.character(index_drug) %in% dropped))
 
+  # no drug class with enough pairs: no figure (nothing is saved)
+  if (nrow(by_drug) == 0) {
+    message("Overall benefit by recommended drug class not drawn: no drug class with ", min_pairs,
+            " or more pairs (", paste(pairs_per_drug$index_drug, pairs_per_drug$n_pairs, collapse = ", "), ")")
+    return(NULL)
+  }
+
   panel_size <- 3.4
   panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
   n_panels   <- length(panel_drugs)
@@ -1171,7 +1178,7 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
 
 # helpers: save the overall benefit figures
 save_overall <- function(fig, file) save_plot(fig, file, panel_width = 4.2, panel_height = 4.2)
-save_overall_by_drug <- function(fig, file) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
+save_overall_by_drug <- function(fig, file) if (!is.null(fig)) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
 
 
 ## Predicted vs observed figure ----
