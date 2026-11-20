@@ -80,6 +80,7 @@ analysis_ethnicity <- t2d_1stinstance %>%
 
 ## Censored variables added
 
+analysis = cprd$analysis("mm")
 # set up dataset
 t2d_1stinstance <- t2d_1stinstance %>%
   analysis$cached("20261113_t2d_1stinstance")
