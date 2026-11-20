@@ -129,6 +129,7 @@ analysis_ethnicity <- t2d_1stinstance %>%
   ### baseline HbA1c>110
   filter(multi_drug_start_class == 0) %>%
   filter(timeprevcombo_class >= 61) %>%
+  mutate(prehba1c = ifelse(drug_class == "GLP1", prehba1c_cens, prehba1c)) %>%  # GLP1: baseline censored at change of GLP1 group
   filter(!is.na(prehba1c)) %>%
   filter(prehba1c >= 53) %>%
   filter(prehba1c <= 110) %>%
@@ -140,12 +141,19 @@ analysis_ethnicity <- t2d_1stinstance %>%
   ### Initiations with a missing outcome HbA1c are kept in this cohort so that
   ### missingness can be described, and are only dropped in the analysis scripts
   ### once the cohort has been split by ethnicity.
-  mutate(posthba1cfinal = ifelse(is.na(posthba1c12m_cens), posthba1c6m_cens, posthba1c12m_cens)) %>%  # generating posthba1c
+  mutate(posthba1cfinal = ifelse(drug_class == "GLP1",
+                                 ifelse(is.na(posthba1c12m_cens), posthba1c6m_cens, posthba1c12m_cens),
+                                 ifelse(is.na(posthba1c12m), posthba1c6m, posthba1c12m))) %>%  # generating posthba1c (GLP1: censored at change of GLP1 group)
   # generating HbA1c month
-  mutate(hba1cmonth_12 = datediff(posthba1c12mdate_cens, dstartdate) / 30) %>%
-  mutate(hba1cmonth_6 = datediff(posthba1c6mdate_cens, dstartdate) / 30) %>%
+  mutate(hba1cmonth_12 = ifelse(drug_class == "GLP1",
+                                datediff(posthba1c12mdate_cens, dstartdate),
+                                datediff(posthba1c12mdate, dstartdate)) / 30) %>%
+  mutate(hba1cmonth_6 = ifelse(drug_class == "GLP1",
+                               datediff(posthba1c6mdate_cens, dstartdate),
+                               datediff(posthba1c6mdate, dstartdate)) / 30) %>%
   mutate(hba1cmonth = ifelse(is.na(hba1cmonth_12), hba1cmonth_6, hba1cmonth_12)) %>%
   analysis$cached("20261113_ethnicity", indexes=c("patid", "dstartdate", "drug_substance"))
+
 
 
 
