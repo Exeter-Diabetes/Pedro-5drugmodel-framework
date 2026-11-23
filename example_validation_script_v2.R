@@ -487,10 +487,10 @@ if (use_calculator) {
 
   ## Predictions from the model files, which need to be in the working directory:
   ##   - fivedrugmodel_5knot_share_20230823.Rdata: the 5-drug model (m1.5.final)
-  ##   - model_update_recal_large.rds: the update, an intercept for each of the
+  ##   - model_update_recal_minimal.rds: the update, an intercept for each of the
   ##     main drug classes (the GLP1 subtypes included)
-  ##   - model_update_recal_large_Oral_Semaglutide.rds and
-  ##     model_update_recal_large_Inje_Semaglutide.rds: the semaglutide update, an
+  ##   - model_update_recal_minimal_Oral_Semaglutide.rds and
+  ##     model_update_recal_minimal_Inje_Semaglutide.rds: the semaglutide update, an
   ##     intercept for each semaglutide form
   ##   Each intercept is added to the published model's prediction of the file's
   ##   base_drugclass (GLP1 for the GLP1 subtypes and semaglutide).
@@ -523,9 +523,9 @@ if (use_calculator) {
   # base drug class
   #   updated prediction = pred.<base_drugclass> (published) + intercept
   model_update <- bind_rows(lapply(
-    c("model_update_recal_large.rds",
-      "model_update_recal_large_Oral_Semaglutide.rds",
-      "model_update_recal_large_Inje_Semaglutide.rds"),
+    c("model_update_recal_minimal.rds",
+      "model_update_recal_minimal_Oral_Semaglutide.rds",
+      "model_update_recal_minimal_Inje_Semaglutide.rds"),
     function(file) readRDS(file) %>% select(drugclass, base_drugclass, intercept)
   ))
 
