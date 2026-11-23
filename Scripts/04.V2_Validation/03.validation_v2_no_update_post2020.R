@@ -212,7 +212,7 @@ glp1_lookup <- setNames(rep(names(glp1_subtypes), lengths(glp1_subtypes)),
 # set up dataset (cohort cached by 01.cohort_scripts.R; tirzepatide, GIPGLP1, is
 # not in it)
 analysis_raw <- analysis_raw %>%
-  analysis$cached("ethnicity") %>%
+  analysis$cached("20261113_ethnicity") %>%
   filter(dstartdate >= cohort_start | drug_substance %in% sema_substances) %>%
   # select variables needed (to shorten the load time)
   select(
