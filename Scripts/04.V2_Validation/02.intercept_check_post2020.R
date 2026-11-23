@@ -7,8 +7,10 @@
 ##  by a constant. This script checks that assumption.
 ##
 ## Each initiation of a drug class (treated) is matched 1:1, with replacement, to an
-##  initiation of a reference drug class, on a propensity score with a caliper on the
-##  variable of the x axis, so both patients of a pair have about the same x. Each
+##  initiation of a reference drug class, as the stricter discordant-as-treated
+##  matching of the validation script (Mahalanobis distance, calipers, exact matching,
+##  each reference initiation used at most 3 times), with a caliper on the variable
+##  of the x axis, so both patients of a pair have about the same x. Each
 ##  matching is done once (with the original predictions) and each version of the
 ##  predictions (original, recalibration-in-the-large, recalibration) is a row of
 ##  the figure, with a column per treated drug class, all on the same axes. Points
@@ -49,7 +51,7 @@
 #############################################################################
 
 needed <- c("analysis_dataset", "drugs", "injectable_drugs", "outcome_var", "drug_labels",
-            "matching_vars_prog", "love_labels", "use_bootstrap", "n_boot", "boot_seed",
+            "matching_vars_prog", "balance_vars_prog", "match_args_disc", "love_labels", "use_bootstrap", "n_boot", "boot_seed",
             "save_plot", "fit_font_size", "x_overhang", "axis_title_size", "wrap_to_width",
             "n_axis_levels")
 not_found <- needed[!vapply(needed, exists, logical(1))]
@@ -102,20 +104,27 @@ check_x_axes <- c(predicted = "predicted HbA1c", baseline = "baseline HbA1c")
 x_caliper <- 0.25
 
 # How the pairs are matched (the settings to change if a love plot shows poor
-# balance; matching_vars_prog, from the validation script, are the covariates):
-#   match_distance: "glm" matches on the propensity score (the probability of the
-#     treated drug class rather than the reference given the covariates), which
-#     balances all covariates together and loses fewer matches than "mahalanobis".
-#   ps_caliper: caliper (SD of the propensity score on the logit scale) for "glm"; 0.2
-#     is the usual choice. NULL for none.
+# balance). By default as the stricter discordant-as-treated matching of the
+# validation script: Mahalanobis distance on its matching_vars_prog, with the
+# calipers, exact matching and reuse cap of its match_args_disc. Balance is
+# checked on its balance_vars_prog (love plots), matched on or not.
+#   match_distance: "mahalanobis" (as the validation script), or "glm" to match on
+#     the propensity score (the probability of the treated drug class rather than
+#     the reference given the covariates).
+#   ps_caliper: caliper (SD of the propensity score on the logit scale), "glm" only;
+#     0.2 is the usual choice. NULL for none.
 #   covariate_calipers: calipers (SD) on single covariates, e.g. c(prebmi = 0.5).
 #   match_exact: covariates matched exactly, e.g. "drugline". Each costs matches.
-#   extra_matching_vars: terms added to the propensity score model, e.g.
+#   reuse_max: the most pairs a reference initiation can be in (Inf for no limit),
+#     taken in match_order ("random" or "closest").
+#   extra_matching_vars: terms added to the distance model, e.g.
 #     c("I(prehba1c^2)", "I(prebmi^2)").
-match_distance      <- "glm"
-ps_caliper          <- 0.2
-covariate_calipers  <- c()
-match_exact         <- c()
+match_distance      <- "mahalanobis"
+ps_caliper          <- NULL
+covariate_calipers  <- match_args_disc$caliper
+match_exact         <- match_args_disc$exact
+reuse_max           <- match_args_disc$reuse.max
+match_order         <- match_args_disc$m.order
 extra_matching_vars <- c()
 
 # The pairs are ordered by x and split into groups of equal size, and each group's
@@ -134,9 +143,9 @@ dir.create(loveplot_path, showWarnings = FALSE, recursive = TRUE)
 # Part 2: Matching -------------------------------------------------------------
 
 # helper: each initiation of treated matched 1:1, with replacement, to the most
-# similar initiation of reference (propensity score on matching_vars_prog by
+# similar initiation of reference (Mahalanobis distance on matching_vars_prog by
 # default, Part 1), with a caliper on the x variable. Returns the matchit object
-# and its data (for the love plot) and the matched pairs:
+# and its data (for the love plot), the covariates matched on, and the matched pairs:
 #   - treated_row, reference_row: the rows of analysis_dataset of the two
 #     initiations (a reference initiation can be in several pairs)
 #   - obs_diff: outcome HbA1c of the treated initiation minus that of the reference
@@ -168,7 +177,8 @@ match_pair <- function(treated, reference, x_axis) {
     link = if (match_distance == "glm") "linear.logit" else "logit",
     replace = TRUE, ratio = 1,
     exact = if (length(match_exact) > 0) reformulate(match_exact),
-    caliper = calipers, std.caliper = TRUE
+    caliper = calipers, std.caliper = TRUE,
+    reuse.max = reuse_max, m.order = match_order
   )
 
   matched <- MatchIt::get_matches(match_obj, data = match_data)
@@ -187,7 +197,7 @@ match_pair <- function(treated, reference, x_axis) {
   cat(treated, "vs", reference, "(x:", x_axis, "):", nrow(pairs), "of", sum(match_data$check_treated),
       "initiations matched to", n_distinct(pairs$reference_row), "reference initiations\n")
 
-  list(matchit = match_obj, data = match_data, pairs = pairs)
+  list(matchit = match_obj, data = match_data, match_vars = match_vars, pairs = pairs)
 }
 
 # helper: the pairs with the predictions of one version (prefix):
@@ -439,8 +449,9 @@ draw_intercept_check <- function(pairs, groups, curves, estimates, reference, x_
 }
 
 # Balance (love) plot of the matchings of one figure: absolute standardised mean
-# difference per matching covariate, the propensity score and the x variable,
-# before and after matching; one panel per treated drug class.
+# difference per covariate of balance_vars_prog (also those not matched on), the
+# propensity score (with "glm") and the x variable, before and after matching; one
+# panel per treated drug class.
 draw_intercept_check_loveplot <- function(matches, reference, x_axis) {
   check_love_labels <- c(love_labels, "distance" = "'Propensity score (logit)'",
                          "x_match" = if (x_axis == "predicted") "'Predicted HbA'[1*c]*' (mmol/mol)'"
@@ -448,7 +459,10 @@ draw_intercept_check_loveplot <- function(matches, reference, x_axis) {
 
   love_data <- bind_rows(lapply(matches, function(m) {
     drug <- m$pairs$drug[1]
-    s <- summary(m$matchit, addlvariables = "x_match", data = m$data)
+    # covariates of balance_vars_prog not matched on (with more than one value) are added
+    not_matched <- setdiff(balance_vars_prog, m$match_vars)
+    not_matched <- not_matched[vapply(m$data[not_matched], function(x) length(unique(x)) > 1, logical(1))]
+    s <- summary(m$matchit, addlvariables = c(not_matched, "x_match"), data = m$data)
     strip <- paste0(drug_labels[[drug]], " as treated\nn = ",
                     format(nrow(m$pairs), big.mark = ",", trim = TRUE), " pairs")
     bind_rows(
