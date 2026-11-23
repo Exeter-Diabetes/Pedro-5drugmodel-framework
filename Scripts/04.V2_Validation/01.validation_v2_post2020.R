@@ -1201,6 +1201,13 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
   dropped <- as.character(pairs_per_drug$index_drug[pairs_per_drug$n_pairs < min_pairs])
   by_drug <- by_drug %>% filter(!(as.character(index_drug) %in% dropped))
 
+  # no drug class with enough pairs: no figure (nothing is saved)
+  if (nrow(by_drug) == 0) {
+    message("Overall benefit by recommended drug class not drawn: no drug class with ", min_pairs,
+            " or more pairs (", paste(pairs_per_drug$index_drug, pairs_per_drug$n_pairs, collapse = ", "), ")")
+    return(NULL)
+  }
+
   panel_size <- 3.4
   panel_drugs <- levels(droplevels(factor(by_drug$index_drug)))
   n_panels   <- length(panel_drugs)
@@ -1252,7 +1259,7 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
 
 # helpers: save the overall benefit figures
 save_overall <- function(fig, file) save_plot(fig, file, panel_width = 4.2, panel_height = 4.2)
-save_overall_by_drug <- function(fig, file) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
+save_overall_by_drug <- function(fig, file) if (!is.null(fig)) save_plot(fig, file, panel_width = 3.4, panel_height = 3.4)
 
 
 ## Predicted vs observed figure ----
@@ -1758,23 +1765,41 @@ pairwise_figure_injectables <- function(prefix, step_title) {
 # analysis in your data, as every patient needs patients on their best drug class
 # to be matched with.
 
-# Covariates used to match concordant and discordant patients. Matching is 1:1
-# with replacement and exact on the predicted-best drug (done inside the
-# function), with a 0.4 SD caliper on baseline HbA1c. These are baseline
+# Covariates whose balance is checked (love plots). These are baseline
 # characteristics only: unlike adjustment_vars above, hba1cmonth (time to
 # outcome measurement) describes the outcome window rather than the patient at
-# baseline, so it is left out of matching.
-matching_vars <- c(
+# baseline, so it is left out.
+balance_vars <- c(
   "t2dmduration", "prebmi", "prehba1c", "agetx", "prealt",
   "preegfr", "pretotalcholesterol", "prehdl",
   "sex", "smoke", "ncurrtx", "drugline"
 )
-matching_vars <- c(matching_vars, "imd5") # CPRD test run: each patient's own deprivation, as in 01-03
+balance_vars <- c(balance_vars, "imd5") # CPRD test run: each patient's own deprivation, as in 01-03
+
+# CPRD test run: matching of 00.V1_Validation/02.validation_v1_post2020.R.
+# Covariates used to match concordant and discordant patients: the strongest
+# predictors of the outcome. Matching on all of balance_vars spread the distance
+# over too many covariates and left BMI, duration and age unbalanced. Matching is
+# 1:1 with replacement and exact on the predicted-best drug (done inside the
+# function), with a 0.4 SD caliper on baseline HbA1c, in both directions.
+matching_vars <- c("prehba1c", "prebmi", "t2dmduration", "agetx", "preegfr", "drugline", "ncurrtx")
+
+# Discordant-as-treated direction only: there are several discordant patients
+# per concordant one, so with unlimited reuse a few concordant patients were
+# matched to hundreds of discordant ones. Here each concordant patient is used
+# at most 3 times (in random order), matches are exact on drug line and number
+# of current drugs, and BMI, duration and age must be within 0.5 SD.
+match_args_disc <- list(
+  caliper = c(prehba1c = 0.4, prebmi = 0.5, t2dmduration = 0.5, agetx = 0.5),
+  exact = c("drugline", "ncurrtx"),
+  reuse.max = 3, m.order = "random"
+)
 # The same covariates plus any prognostic factors in prognostic_vars. Used for
 # matching in every version of the predictions, the original included (the prognostic
 # factor is a cross-cutting control, not a version of its own); equal to matching_vars
 # until you populate prognostic_vars.
 matching_vars_prog <- unique(c(matching_vars, prognostic_vars))
+balance_vars_prog  <- unique(c(balance_vars, prognostic_vars))
 
 # Confidence intervals: FALSE uses fast analytical intervals; set to TRUE for
 # pair-level bootstrap intervals (slower) that account for matching with
@@ -1809,7 +1834,7 @@ love_labels <- c(
   "drugline4"           = "'Number of previous glucose-lowering drugs = 4'",
   "drugline5+"          = "'Number of previous glucose-lowering drugs = >4'"
 )
-# CPRD test run: deprivation (matched on above), labelled as in 01-03
+# CPRD test run: deprivation (balance checked above), labelled as in 01-03
 love_labels <- c(love_labels,
   "imd51 (least)" = "'Index of multiple deprivation = 1 (least deprived)'",
   "imd52"         = "'Index of multiple deprivation = 2'",
@@ -1819,13 +1844,16 @@ love_labels <- c(love_labels,
 )
 
 # Balance (love) plot of one matching: absolute standardised mean
-# difference per matching covariate, before and after matching, in each
-# matching direction. Exact-matched variables are left out.
+# difference per covariate of balance_vars (also those not matched on), before
+# and after matching, in each matching direction.
 plot_loveplot <- function(match_obj) {
 
   # covariates with a single value cannot be summarised and are left out: e.g.
   # the predicted best drug class, when it is the same for every patient
   love_summary <- function(m) {
+    left_out <- setdiff(match_obj$balance_vars, names(m$X))
+    if (length(left_out) > 0) m$X <- cbind(m$X, as.data.frame(match_obj$data)[, left_out, drop = FALSE])
+    m$X <- m$X[, c(setdiff(names(m$X), match_obj$balance_vars), match_obj$balance_vars), drop = FALSE]
     m$X <- m$X[, vapply(m$X, function(x) length(unique(x)) > 1, logical(1)), drop = FALSE]
     summary(m)
   }
@@ -1914,7 +1942,8 @@ overall_benefit <- function(analysis, prefix, step_title) {
 
   # match concordant vs discordant patients (returns the concordant, discordant
   # and combined matched populations, plus the matchit objects for love plots).
-  # The matching can be changed here, e.g. if a love plot shows poor balance.
+  # The same matching for every version of the predictions; change it above
+  # (matching_vars, match_args_disc), e.g. if a love plot shows poor balance.
   matched <- cateval::match_benefit_pairs(
     data = analysis$data,
     drug_var = "drugclass",
@@ -1922,8 +1951,14 @@ overall_benefit <- function(analysis, prefix, step_title) {
     pred_cols = paste0(prefix, analysis$drugs),
     matching_var = matching_vars_prog,
     caliper = c(prehba1c = 0.4),
+    match_args_disc = match_args_disc, # CPRD test run: stricter discordant-as-treated matching
     seed = 19840503
   )
+  # every patient is matched on (no rows dropped), so the love plot can add the
+  # covariates of balance_vars that are not matched on
+  stopifnot(length(matched$matchit$concordant$treat) == nrow(analysis$data))
+  matched$data <- analysis$data
+  matched$balance_vars <- balance_vars_prog
 
   # group the matched pairs by predicted benefit (each cal_groups setting), for each population
   deciles_conc <- cateval::benefit_by_group(matched$concordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
