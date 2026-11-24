@@ -1107,7 +1107,7 @@ overall_figure <- function(deciles_conc, deciles_disc, deciles_both, title) {
     )
 }
 
-# same plot, one panel (3.4 inches) per recommended drug class; the LOESS curve is
+# same plot, one panel (3.4 inches) per drug class initiated (index_drug); the LOESS curve is
 # fitted separately within each panel, from that drug's own group points. Each facet
 # title is the drug class and its number of matched pairs (the per-group `n` of
 # benefit_by_drug() summed). The number of groups is chosen per drug class; drug
@@ -1136,7 +1136,7 @@ plot_calibration_by_drug <- function(by_drug, title = NULL, min_n = 100, min_pai
 
   # no drug class with enough pairs: no figure (nothing is saved)
   if (nrow(by_drug) == 0) {
-    message("Overall benefit by recommended drug class not drawn: no drug class with ", min_pairs,
+    message("Overall benefit by drug class initiated not drawn: no drug class with ", min_pairs,
             " or more pairs (", paste(pairs_per_drug$index_drug, pairs_per_drug$n_pairs, collapse = ", "), ")")
     return(NULL)
   }
@@ -1726,9 +1726,9 @@ overall_benefit <- function(prefix, step_title) {
   deciles_disc <- cateval::benefit_by_group(matched$discordant, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
   deciles_both <- cateval::benefit_by_group(matched$combined,   cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
-  # calibration by recommended drug class: concordant pairs only, so each panel is
-  # the patients recommended that drug class who received it
-  by_drug <- cateval::benefit_by_drug(matched$concordant, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
+  # calibration by drug class initiated: all the matched pairs (combined), each in
+  # the panel of the drug class its index patient initiated (index_drug)
+  by_drug <- cateval::benefit_by_drug(matched$combined, drugs = drugs, cal_groups = cal_groups, bootstrap = use_bootstrap, n_boot = n_boot, boot_seed = boot_seed)
 
   title_end <- paste0(" (", tolower(step_title), ")")
 
@@ -1740,7 +1740,7 @@ overall_benefit <- function(prefix, step_title) {
     # calibration plot for each matched population, side by side
     plot = overall_figure(deciles_conc, deciles_disc, deciles_both,
                           title = paste0("Overall Benefit Calibration", title_end)),
-    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by recommended drug class", title_end))
+    plot_by_drug = plot_calibration_by_drug(by_drug, title = paste0("Overall Benefit Calibration by drug class initiated", title_end))
   )
 }
 
