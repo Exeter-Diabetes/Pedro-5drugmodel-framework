@@ -5,6 +5,8 @@
 ##  03-Treatment-response-(MASTERMIND)/11_final_merge.R), all initiations of any date.
 ##  Where SDRN codes a variable differently from CPRD (ethnicity), it is recoded to
 ##  the CPRD coding, so that the validation scripts read it as the CPRD test runs do.
+##  As in the CPRD cohort (Scripts/01.cohort_scripts.R, 20261113 version), GLP1 baseline
+##  and outcome HbA1c are the _cens versions (censored at a change of GLP1 group).
 ##
 ## The cohort is saved in Scripts/05.SDRN/Data/ (not in git). Patient-level data
 ##  never leaves the SDRN server: this script only prints counts (the flow diagram),
@@ -22,7 +24,7 @@ library(tidyverse)
 setwd("/home/pcardoso/workspace/Pedro-5drugmodel-framework")
 
 # SDRN treatment response dataset: change the date to the newest version
-sdrn_dataset <- "mm_20250506_t2d_1stinstance"
+sdrn_dataset <- "mm_20261111_t2d_1stinstance"
 
 # where the cohort is saved (not in git)
 cohort_file <- "Scripts/05.SDRN/Data/sdrn_cohort.RData"
@@ -113,6 +115,7 @@ analysis_cohort <- t2d_1stinstance %>%
   add_step("one drug class started that day") %>%
   filter(timeprevcombo_class >= 61) %>%
   add_step(">=61 days since last treatment change") %>%
+  mutate(prehba1c = ifelse(drug_class == "GLP1", prehba1c_cens, prehba1c)) %>%  # GLP1: baseline censored at change of GLP1 group
   filter(!is.na(prehba1c)) %>%
   filter(prehba1c >= 53) %>%
   filter(prehba1c <= 110) %>%
@@ -126,10 +129,12 @@ analysis_cohort <- t2d_1stinstance %>%
   ### Initiations with a missing outcome HbA1c are kept in this cohort so that
   ### missingness can be described, and are only dropped in the validation scripts
   ### (after imputation).
-  mutate(posthba1cfinal = ifelse(is.na(posthba1c12m), posthba1c6m, posthba1c12m)) %>%  # generating posthba1c
+  mutate(posthba1cfinal = ifelse(drug_class == "GLP1",
+                                 ifelse(is.na(posthba1c12m_cens), posthba1c6m_cens, posthba1c12m_cens),
+                                 ifelse(is.na(posthba1c12m), posthba1c6m, posthba1c12m))) %>%  # generating posthba1c (GLP1: censored at change of GLP1 group)
   # generating HbA1c month
-  mutate(hba1cmonth_12 = as.numeric(difftime(posthba1c12mdate, dstartdate, units = "days")) / 30) %>%
-  mutate(hba1cmonth_6 = as.numeric(difftime(posthba1c6mdate, dstartdate, units = "days")) / 30) %>%
+  mutate(hba1cmonth_12 = as.numeric(difftime(if_else(drug_class == "GLP1", posthba1c12mdate_cens, posthba1c12mdate), dstartdate, units = "days")) / 30) %>%
+  mutate(hba1cmonth_6 = as.numeric(difftime(if_else(drug_class == "GLP1", posthba1c6mdate_cens, posthba1c6mdate), dstartdate, units = "days")) / 30) %>%
   mutate(hba1cmonth = ifelse(is.na(hba1cmonth_12), hba1cmonth_6, hba1cmonth_12))
 
 
